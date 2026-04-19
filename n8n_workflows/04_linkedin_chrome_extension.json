@@ -1,0 +1,366 @@
+{
+  "name": "La Falla | 04 - LinkedIn Chrome Extension",
+  "nodes": [
+    {
+      "id": "s4",
+      "name": "📋 Credenciales",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 540,
+        "height": 340,
+        "content": "## Variables de entorno N8N (Settings → Environment)\n\n- `FASTAPI_BASE_URL`              = URL FastAPI  (ej: http://api-stakeholders:8000)\n- `FASTAPI_API_KEY`               = Clave compartida N8N ↔ FastAPI\n- `CHATWOOT_API_BASE`             = URL base  (ej: https://chatwoot.host/api/v1/accounts/1)\n- `CHATWOOT_API_TOKEN`            = Chatwoot → Settings → Access Token\n- `CHATWOOT_WA_INBOX_ID`          = ID del inbox WhatsApp en Chatwoot\n- `CHATWOOT_JUAN_CONVERSATION_ID` = ID conversación de Juan Carlos en Chatwoot\n- `AUTHORIZED_WA_NUMBERS`         = Números autorizados (solo dígitos, separados por coma)\n- `OPENAI_API_KEY`                = Token OpenAI\n\n**WF1 — Configurar en Chatwoot:**\nSettings → Integrations → Webhooks → URL:\n`<N8N_HOST>/webhook/chatwoot-inbound-lafalla`\nEventos: ✅ Message Created\n\n**⚙️ Extensión Chrome:**\nConstruir `chrome_ext_linkedin/` y configurar el webhook URL + FASTAPI_API_KEY."
+      }
+    },
+    {
+      "id": "n_wh4",
+      "name": "🔗 Webhook Chrome Extension",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "parameters": {
+        "path": "linkedin-chrome-lafalla",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      }
+    },
+    {
+      "id": "n_verify4",
+      "name": "🔐 Verificar API Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const key = $input.item.json.headers?.['x-api-key']\n         ?? $input.item.json.headers?.['X-Api-Key'] ?? '';\nconst expected = process.env.FASTAPI_API_KEY ?? '';\nreturn { json: {\n  authorized: expected !== '' && key === expected,\n  linkedin_url: $input.item.json.body?.linkedin_url ?? '',\n  nombre:       $input.item.json.body?.nombre ?? '',\n  headline:     $input.item.json.body?.headline ?? '',\n  empresa:      $input.item.json.body?.empresa ?? '',\n}};"
+      }
+    },
+    {
+      "id": "n_ifauth4",
+      "name": "🔐 ¿Autorizado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.authorized}}",
+              "operation": "true"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_check4",
+      "name": "🔍 ¿Existe en Base?",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FASTAPI_BASE_URL}}/stakeholders",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "linkedin_url",
+              "value": "={{$json.linkedin_url}}"
+            }
+          ]
+        },
+        "onError": "continueErrorOutput"
+      }
+    },
+    {
+      "id": "n_ifexists",
+      "name": "❓ ¿Ya Existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{($json ?? []).length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_wa_new4",
+      "name": "💬 Preguntar a JC (Nuevo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1440,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $env.CHATWOOT_JUAN_CONVERSATION_ID + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:'👤 Detecté que contactaste a *'+$('🔐 Verificar API Key').item.json.nombre+'* ('+$('🔐 Verificar API Key').item.json.headline+') en LinkedIn y no está en la base.\\n\\n¿Lo guardo?\\n• `/agregar '+$('🔐 Verificar API Key').item.json.nombre+', '+$('🔐 Verificar API Key').item.json.headline+'` para guardar\\n• O ignora este mensaje,message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_wa_exists4",
+      "name": "💬 Notificar Que Ya Existe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1440,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $env.CHATWOOT_JUAN_CONVERSATION_ID + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:'ℹ️ *'+$('🔐 Verificar API Key').item.json.nombre+'* ya está en la base de datos.',message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_resp4_ok",
+      "name": "✅ Respuesta 200 OK",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        960,
+        540
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "status",
+              "value": "ok",
+              "type": "string"
+            },
+            {
+              "name": "message",
+              "value": "processed",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_resp4_deny",
+      "name": "🚫 Respuesta 401",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        720,
+        540
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "status",
+              "value": "unauthorized",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_whr4",
+      "name": "📤 Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        540
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "🔗 Webhook Chrome Extension": {
+      "main": [
+        [
+          {
+            "node": "🔐 Verificar API Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Verificar API Key": {
+      "main": [
+        [
+          {
+            "node": "🔐 ¿Autorizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 ¿Autorizado?": {
+      "main": [
+        [
+          {
+            "node": "🔍 ¿Existe en Base?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🚫 Respuesta 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 ¿Existe en Base?": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Ya Existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Ya Existe?": {
+      "main": [
+        [
+          {
+            "node": "💬 Notificar Que Ya Existe",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "💬 Preguntar a JC (Nuevo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Preguntar a JC (Nuevo)": {
+      "main": [
+        [
+          {
+            "node": "✅ Respuesta 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Notificar Que Ya Existe": {
+      "main": [
+        [
+          {
+            "node": "✅ Respuesta 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Respuesta 200 OK": {
+      "main": [
+        [
+          {
+            "node": "📤 Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚫 Respuesta 401": {
+      "main": [
+        [
+          {
+            "node": "📤 Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}

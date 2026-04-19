@@ -1,0 +1,383 @@
+{
+  "name": "La Falla | 02 - Outbound Mensual Proveedores",
+  "nodes": [
+    {
+      "id": "s2",
+      "name": "📋 Credenciales",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 540,
+        "height": 340,
+        "content": "## Variables de entorno N8N (Settings → Environment)\n\n- `FASTAPI_BASE_URL`              = URL FastAPI  (ej: http://api-stakeholders:8000)\n- `FASTAPI_API_KEY`               = Clave compartida N8N ↔ FastAPI\n- `CHATWOOT_API_BASE`             = URL base  (ej: https://chatwoot.host/api/v1/accounts/1)\n- `CHATWOOT_API_TOKEN`            = Chatwoot → Settings → Access Token\n- `CHATWOOT_WA_INBOX_ID`          = ID del inbox WhatsApp en Chatwoot\n- `CHATWOOT_JUAN_CONVERSATION_ID` = ID conversación de Juan Carlos en Chatwoot\n- `AUTHORIZED_WA_NUMBERS`         = Números autorizados (solo dígitos, separados por coma)\n- `OPENAI_API_KEY`                = Token OpenAI\n\n**WF1 — Configurar en Chatwoot:**\nSettings → Integrations → Webhooks → URL:\n`<N8N_HOST>/webhook/chatwoot-inbound-lafalla`\nEventos: ✅ Message Created\n\n**⚠️ Template HSM:**\nRegistrar `locacion_mantenimiento_lafalla` en Meta Business Manager.\nLuego agregar en Chatwoot → Settings → Inboxes → WhatsApp → Message Templates."
+      }
+    },
+    {
+      "id": "n_sched",
+      "name": "🗓️ Primer Lunes del Mes 9AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression"
+            }
+          ]
+        },
+        "cronExpression": "0 14 1-7 * 1"
+      }
+    },
+    {
+      "id": "n_get",
+      "name": "📋 Obtener Proveedores",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FASTAPI_BASE_URL}}/stakeholders",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "clasificacion",
+              "value": "Proveedores (Locaciones)"
+            },
+            {
+              "name": "con_telefono",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_filter",
+      "name": "🔧 Filtrar Cooldown 25 días",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst stakeholders = Array.isArray(items[0]?.json) ? items[0].json : items.map(i => i.json);\nconst now = Date.now();\nconst COOLDOWN_MS = 25 * 24 * 60 * 60 * 1000;\n\nconst toSend = stakeholders.filter(s => {\n  const last = s.last_outbound_whatsapp ? new Date(s.last_outbound_whatsapp).getTime() : 0;\n  return (now - last) > COOLDOWN_MS;\n});\n\nreturn toSend.map(s => ({\n  json: {\n    id: s.id,\n    nombre: s.nombre ?? '',\n    telefono: s.telefono ?? '',\n    descripcion: s.servicios ?? s.observaciones ?? 'tu espacio',\n  }\n}));"
+      }
+    },
+    {
+      "id": "n_ifdata2",
+      "name": "❓ ¿Hay Proveedores?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$input.all().length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_batch",
+      "name": "📦 Procesar de a 1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "n_create_ct",
+      "name": "➕ Crear Contacto Chatwoot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/contacts'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({name:$json.nombre,phone_number:'+'+$json.telefono}) }}"
+      }
+    },
+    {
+      "id": "n_send_tmpl",
+      "name": "📤 Crear Conversación con Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1680,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({inbox_id:Number($env.CHATWOOT_WA_INBOX_ID),contact_id:$json.id,message:{template_params:{name:'locacion_mantenimiento_lafalla',category:'UTILITY',language:'es',processed_params:{'1':$('📦 Procesar de a 1').item.json.nombre,'2':$('📦 Procesar de a 1').item.json.descripcion||'tu espacio'}}}}) }}"
+      }
+    },
+    {
+      "id": "n_log2",
+      "name": "📝 Registrar Envío",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1920,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_BASE_URL}}/interactions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({stakeholder_id:$('📦 Procesar de a 1').item.json.id,campaign:'whatsapp_proveedores_mensual',canal:'whatsapp',direccion:'out',status:'sent'}) }}"
+      }
+    },
+    {
+      "id": "n_summary_code",
+      "name": "📊 Contar Resultados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const total = $input.all().length;\nreturn [{ json: { total_enviados: total, fecha: new Date().toLocaleDateString('es-CO') } }];"
+      }
+    },
+    {
+      "id": "n_wa_sum2",
+      "name": "📨 Resumen a Juan Carlos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2400,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $env.CHATWOOT_JUAN_CONVERSATION_ID + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:'✅ Campaña mensual Proveedores completada\\n📊 Mensajes enviados: '+$json.total_enviados+'\\n📅 Fecha: '+$json.fecha,message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_nodata2",
+      "name": "⏭️ Sin Proveedores Hoy",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        500
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "🗓️ Primer Lunes del Mes 9AM": {
+      "main": [
+        [
+          {
+            "node": "📋 Obtener Proveedores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Obtener Proveedores": {
+      "main": [
+        [
+          {
+            "node": "🔧 Filtrar Cooldown 25 días",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Filtrar Cooldown 25 días": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Hay Proveedores?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Hay Proveedores?": {
+      "main": [
+        [
+          {
+            "node": "📦 Procesar de a 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⏭️ Sin Proveedores Hoy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Procesar de a 1": {
+      "main": [
+        [
+          {
+            "node": "➕ Crear Contacto Chatwoot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📊 Contar Resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "➕ Crear Contacto Chatwoot": {
+      "main": [
+        [
+          {
+            "node": "📤 Crear Conversación con Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Crear Conversación con Template": {
+      "main": [
+        [
+          {
+            "node": "📝 Registrar Envío",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Registrar Envío": {
+      "main": [
+        [
+          {
+            "node": "📦 Procesar de a 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Contar Resultados": {
+      "main": [
+        [
+          {
+            "node": "📨 Resumen a Juan Carlos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}

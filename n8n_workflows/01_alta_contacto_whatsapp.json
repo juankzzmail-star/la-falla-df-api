@@ -1,0 +1,644 @@
+{
+  "name": "La Falla | 01 - Alta Contacto WhatsApp",
+  "nodes": [
+    {
+      "id": "s1",
+      "name": "📋 Credenciales",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 540,
+        "height": 300,
+        "content": "## Variables de entorno N8N (Settings → Environment)\n\n- `FASTAPI_BASE_URL`              = URL FastAPI  (ej: http://api-stakeholders:8000)\n- `FASTAPI_API_KEY`               = Clave compartida N8N ↔ FastAPI\n- `CHATWOOT_API_BASE`             = URL base  (ej: https://chatwoot.host/api/v1/accounts/1)\n- `CHATWOOT_API_TOKEN`            = Chatwoot → Settings → Access Token\n- `CHATWOOT_WA_INBOX_ID`          = ID del inbox WhatsApp en Chatwoot\n- `CHATWOOT_JUAN_CONVERSATION_ID` = ID conversación de Juan Carlos en Chatwoot\n- `AUTHORIZED_WA_NUMBERS`         = Números autorizados (solo dígitos, separados por coma)\n- `OPENAI_API_KEY`                = Token OpenAI\n\n**WF1 — Configurar en Chatwoot:**\nSettings → Integrations → Webhooks → URL:\n`<N8N_HOST>/webhook/chatwoot-inbound-lafalla`\nEventos: ✅ Message Created"
+      }
+    },
+    {
+      "id": "n_wh",
+      "name": "📱 Chatwoot Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        380
+      ],
+      "parameters": {
+        "path": "chatwoot-inbound-lafalla",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "responseCode": 200
+      }
+    },
+    {
+      "id": "n_parse",
+      "name": "🔍 Parsear Mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const body = $input.item.json.body ?? $input.item.json;\n\n// Chatwoot dispara varios eventos — solo procesar mensajes entrantes\nif (body.event !== 'message_created' || body.message_type !== 'incoming') {\n  return { json: { skip: true, isAuthorized: false, intent: 'skip', conversationId: null } };\n}\n\nconst senderPhone = (body.sender?.phone_number ?? '').replace(/\\D/g, '');\nconst from = senderPhone;\nconst conversationId = body.conversation?.id ?? null;\n\nconst authList = (process.env.AUTHORIZED_WA_NUMBERS ?? '')\n  .split(',').map(s => s.trim().replace(/\\D/g, '')).filter(Boolean);\nconst isAuthorized = authList.length === 0 || authList.includes(from);\n\nconst rawText = (body.content ?? '').trim();\nconst isVCard = rawText.startsWith('BEGIN:VCARD');\n\nlet vCard = null;\nif (isVCard) {\n  const fnMatch    = rawText.match(/FN[^:]*:(.+)/);\n  const telMatch   = rawText.match(/TEL[^:]*:(.+)/);\n  const emailMatch = rawText.match(/EMAIL[^:]*:(.+)/);\n  vCard = {\n    nombre:   fnMatch?.[1]?.trim() ?? '',\n    telefono: (telMatch?.[1]?.trim() ?? '').replace(/\\D/g, ''),\n    correo:   emailMatch?.[1]?.trim() ?? '',\n  };\n}\n\nconst txt = isVCard ? '' : rawText;\nlet intent = 'desconocido';\nif (isVCard || /^\\/contacto/i.test(txt)) intent = 'nuevo_contacto';\nelse if (/^\\/enviado\\s+\\d+/i.test(txt))  intent = 'marcar_enviado';\nelse if (/^\\/agregar/i.test(txt))         intent = 'agregar_linkedin';\nelse if (txt.length > 15)                intent = 'nuevo_contacto';\n\nconst matchId = txt.match(/\\/enviado\\s+(\\d+)/i);\n\nreturn { json: {\n  from, isAuthorized, intent, rawText: txt, vCard, conversationId,\n  descripcion: txt.replace(/^\\/contacto\\s*/i,'').replace(/^\\/agregar\\s*/i,'').trim(),\n  enviado_id: matchId ? parseInt(matchId[1]) : null,\n}};"
+      }
+    },
+    {
+      "id": "n_ifauth",
+      "name": "🔐 ¿Número Autorizado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.isAuthorized}}",
+              "operation": "true"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_sw",
+      "name": "🔀 Enrutar Intención",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        960,
+        280
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": [
+          {
+            "conditions": {
+              "string": [
+                {
+                  "value1": "={{$json.intent}}",
+                  "operation": "equals",
+                  "value2": "nuevo_contacto"
+                }
+              ]
+            }
+          },
+          {
+            "conditions": {
+              "string": [
+                {
+                  "value1": "={{$json.intent}}",
+                  "operation": "equals",
+                  "value2": "marcar_enviado"
+                }
+              ]
+            }
+          },
+          {
+            "conditions": {
+              "string": [
+                {
+                  "value1": "={{$json.intent}}",
+                  "operation": "equals",
+                  "value2": "agregar_linkedin"
+                }
+              ]
+            }
+          }
+        ],
+        "fallbackOutput": "extra"
+      }
+    },
+    {
+      "id": "n_oai1",
+      "name": "🤖 IA: Extraer Campos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1200,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.OPENAI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:'gpt-4o-mini',temperature:0.2,max_tokens:500,response_format:{type:'json_object'},messages:[{role:'system',content:'Eres asistente CRM de La Falla DF. Extrae datos de contacto de mensajes en español. Devuelve SOLO JSON válido con campos: nombre (string), rol (string), correo (string), telefono (string, solo dígitos), observaciones (descripción completa de quién es y por qué es relevante), servicios (string), ubicacion (ciudad/región). Campos no detectados = string vacío.'},{role:'user',content:'Mensaje: '+$json.descripcion+($json.vCard?'\\nvCard - Nombre: '+$json.vCard.nombre+'  Tel: '+$json.vCard.telefono+'  Email: '+$json.vCard.correo:'')}]}) }}"
+      }
+    },
+    {
+      "id": "n_merge1",
+      "name": "🔧 Parsear + Combinar vCard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const aiContent = $input.item.json.choices?.[0]?.message?.content ?? '{}';\nlet contact = {};\ntry {\n  const m = aiContent.match(/```json\\n?([\\s\\S]*?)```/) ?? aiContent.match(/\\{[\\s\\S]*\\}/);\n  contact = JSON.parse((m?.[1] ?? m?.[0] ?? aiContent).trim());\n} catch(e) { contact = { observaciones: aiContent }; }\n\nconst vc = $('🔍 Parsear Mensaje').item.json.vCard;\nif (vc) {\n  if (vc.nombre && !contact.nombre)   contact.nombre = vc.nombre;\n  if (vc.telefono && !contact.telefono) contact.telefono = vc.telefono;\n  if (vc.correo && !contact.correo)   contact.correo = vc.correo;\n}\nreturn { json: {\n  ...contact,\n  fuente_archivo: 'WhatsApp Inbound',\n  quien_contacta: $('🔍 Parsear Mensaje').item.json.from,\n  _from: $('🔍 Parsear Mensaje').item.json.from,\n  _conversationId: $('🔍 Parsear Mensaje').item.json.conversationId,\n}};"
+      }
+    },
+    {
+      "id": "n_classify1",
+      "name": "📊 Clasificar Contacto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1680,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_BASE_URL}}/classify",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({nombre:$json.nombre||'',rol:$json.rol||'',correo:$json.correo||'',telefono:$json.telefono||'',observaciones:$json.observaciones||'',servicios:$json.servicios||'',ubicacion:$json.ubicacion||'',fuente_hojas:'WhatsApp Inbound'}) }}"
+      }
+    },
+    {
+      "id": "n_insert1",
+      "name": "💾 Guardar Stakeholder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1920,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_BASE_URL}}/stakeholders",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({nombre:$('🔧 Parsear + Combinar vCard').item.json.nombre||'',rol:$('🔧 Parsear + Combinar vCard').item.json.rol||'',correo:$('🔧 Parsear + Combinar vCard').item.json.correo||'',telefono:$('🔧 Parsear + Combinar vCard').item.json.telefono||'',observaciones:$('🔧 Parsear + Combinar vCard').item.json.observaciones||'',servicios:$('🔧 Parsear + Combinar vCard').item.json.servicios||'',ubicacion:$('🔧 Parsear + Combinar vCard').item.json.ubicacion||'',fuente_archivo:'WhatsApp Inbound',quien_contacta:$('🔧 Parsear + Combinar vCard').item.json._from||''}) }}"
+      }
+    },
+    {
+      "id": "n_wa_ok1",
+      "name": "✅ Confirmar Alta por WA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2160,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $('🔧 Parsear + Combinar vCard').item.json._conversationId + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:'✅ Guardado: *'+$('💾 Guardar Stakeholder').item.json.nombre+'* → '+$('📊 Clasificar Contacto').item.json.clasificacion+'\\n📌 '+$('📊 Clasificar Contacto').item.json.razon+'\\n🆔 ID: '+($('💾 Guardar Stakeholder').item.json.id??'guardado'),message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_loglin",
+      "name": "📝 Registrar Enviado LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1200,
+        320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_BASE_URL}}/interactions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({stakeholder_id:$json.enviado_id,campaign:'linkedin_clientes',canal:'linkedin',direccion:'out',mensaje:'Marcado por gerente',status:'sent'}) }}"
+      }
+    },
+    {
+      "id": "n_wa_lin",
+      "name": "✅ Confirmar Registro LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1440,
+        320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $('🔍 Parsear Mensaje').item.json.conversationId + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:'✅ LinkedIn registrado. ID '+$json.stakeholder_id+' no aparecerá en el próximo dashboard semanal.',message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_oai2",
+      "name": "🤖 IA: Extraer LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1200,
+        520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.OPENAI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:'gpt-4o-mini',temperature:0.2,max_tokens:400,response_format:{type:'json_object'},messages:[{role:'system',content:'Extrae datos de contacto. Devuelve JSON: {nombre, rol, correo, telefono, observaciones, servicios, ubicacion}. Campos no detectados = string vacío.'},{role:'user',content:$json.descripcion}]}) }}"
+      }
+    },
+    {
+      "id": "n_merge2",
+      "name": "🔧 Parsear LinkedIn",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const ai = $input.item.json.choices?.[0]?.message?.content ?? '{}';\nlet c = {};\ntry { c = JSON.parse(ai.match(/\\{[\\s\\S]*\\}/)?.[0] ?? ai); } catch(e) { c = {observaciones: ai}; }\nreturn { json: {\n  ...c,\n  fuente_archivo: 'LinkedIn Inbound',\n  quien_contacta: $('🔍 Parsear Mensaje').item.json.from,\n  _from: $('🔍 Parsear Mensaje').item.json.from,\n  _conversationId: $('🔍 Parsear Mensaje').item.json.conversationId,\n}};"
+      }
+    },
+    {
+      "id": "n_classify2",
+      "name": "📊 Clasificar LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1680,
+        520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_BASE_URL}}/classify",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({nombre:$json.nombre||'',rol:$json.rol||'',observaciones:$json.observaciones||'',fuente_hojas:'LinkedIn Inbound'}) }}"
+      }
+    },
+    {
+      "id": "n_insert2",
+      "name": "💾 Guardar Contacto LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1920,
+        520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_BASE_URL}}/stakeholders",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({nombre:$('🔧 Parsear LinkedIn').item.json.nombre||'',rol:$('🔧 Parsear LinkedIn').item.json.rol||'',correo:$('🔧 Parsear LinkedIn').item.json.correo||'',telefono:$('🔧 Parsear LinkedIn').item.json.telefono||'',observaciones:$('🔧 Parsear LinkedIn').item.json.observaciones||'',fuente_archivo:'LinkedIn Inbound',quien_contacta:$('🔧 Parsear LinkedIn').item.json._from||''}) }}"
+      }
+    },
+    {
+      "id": "n_wa_ok2",
+      "name": "✅ Confirmar LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2160,
+        520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $('🔧 Parsear LinkedIn').item.json._conversationId + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:'✅ Contacto de LinkedIn guardado: *'+$('💾 Guardar Contacto LinkedIn').item.json.nombre+'* → '+$('📊 Clasificar LinkedIn').item.json.clasificacion,message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_wa_help",
+      "name": "❓ Enviar Ayuda",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1200,
+        720
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $('🔍 Parsear Mensaje').item.json.conversationId + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:'🤖 *Bot CRM La Falla*\\n\\nComandos disponibles:\\n\\n📇 *Envía una tarjeta de contacto* + descripción → Nueva alta automática\\n\\n`/contacto <descripción>` → Alta con texto libre\\n\\n`/enviado <ID>` → Marcar cliente como contactado en LinkedIn\\n\\n`/agregar <nombre, descripción>` → Agregar contacto desde LinkedIn',message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_noop",
+      "name": "🚫 No Autorizado",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        960,
+        500
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "📱 Chatwoot Inbound Webhook": {
+      "main": [
+        [
+          {
+            "node": "🔍 Parsear Mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Parsear Mensaje": {
+      "main": [
+        [
+          {
+            "node": "🔐 ¿Número Autorizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 ¿Número Autorizado?": {
+      "main": [
+        [
+          {
+            "node": "🔀 Enrutar Intención",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🚫 No Autorizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Enrutar Intención": {
+      "main": [
+        [
+          {
+            "node": "🤖 IA: Extraer Campos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📝 Registrar Enviado LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🤖 IA: Extraer LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❓ Enviar Ayuda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 IA: Extraer Campos": {
+      "main": [
+        [
+          {
+            "node": "🔧 Parsear + Combinar vCard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Parsear + Combinar vCard": {
+      "main": [
+        [
+          {
+            "node": "📊 Clasificar Contacto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Clasificar Contacto": {
+      "main": [
+        [
+          {
+            "node": "💾 Guardar Stakeholder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Guardar Stakeholder": {
+      "main": [
+        [
+          {
+            "node": "✅ Confirmar Alta por WA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Registrar Enviado LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "✅ Confirmar Registro LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 IA: Extraer LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "🔧 Parsear LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Parsear LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "📊 Clasificar LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Clasificar LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "💾 Guardar Contacto LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Guardar Contacto LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "✅ Confirmar LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}

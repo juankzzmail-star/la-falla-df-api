@@ -1,0 +1,330 @@
+{
+  "name": "La Falla | 03 - LinkedIn Borradores Semanales",
+  "nodes": [
+    {
+      "id": "s3",
+      "name": "📋 Credenciales",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 540,
+        "height": 300,
+        "content": "## Variables de entorno N8N (Settings → Environment)\n\n- `FASTAPI_BASE_URL`              = URL FastAPI  (ej: http://api-stakeholders:8000)\n- `FASTAPI_API_KEY`               = Clave compartida N8N ↔ FastAPI\n- `CHATWOOT_API_BASE`             = URL base  (ej: https://chatwoot.host/api/v1/accounts/1)\n- `CHATWOOT_API_TOKEN`            = Chatwoot → Settings → Access Token\n- `CHATWOOT_WA_INBOX_ID`          = ID del inbox WhatsApp en Chatwoot\n- `CHATWOOT_JUAN_CONVERSATION_ID` = ID conversación de Juan Carlos en Chatwoot\n- `AUTHORIZED_WA_NUMBERS`         = Números autorizados (solo dígitos, separados por coma)\n- `OPENAI_API_KEY`                = Token OpenAI\n\n**WF1 — Configurar en Chatwoot:**\nSettings → Integrations → Webhooks → URL:\n`<N8N_HOST>/webhook/chatwoot-inbound-lafalla`\nEventos: ✅ Message Created"
+      }
+    },
+    {
+      "id": "n_sched3",
+      "name": "🗓️ Lunes 8AM - LinkedIn",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        360
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression"
+            }
+          ]
+        },
+        "cronExpression": "0 13 * * 1"
+      }
+    },
+    {
+      "id": "n_get3",
+      "name": "📋 Obtener Clientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        480,
+        360
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FASTAPI_BASE_URL}}/stakeholders",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "clasificacion",
+              "value": "Clientes"
+            },
+            {
+              "name": "sin_interaccion_dias",
+              "value": "30"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_top5",
+      "name": "🏆 Top 5 Hot Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.all();\nconst list = Array.isArray(raw[0]?.json) ? raw[0].json : raw.map(i => i.json);\n\nconst sorted = list\n  .sort((a, b) => (b.apariciones ?? 1) - (a.apariciones ?? 1))\n  .slice(0, 5);\n\nreturn sorted.map(s => ({ json: {\n  id: s.id,\n  nombre: s.nombre ?? '',\n  rol: s.rol ?? '',\n  servicios: s.servicios ?? '',\n  observaciones: s.observaciones ?? '',\n  redes: s.redes ?? '',\n  apariciones: s.apariciones ?? 1,\n}}));"
+      }
+    },
+    {
+      "id": "n_ifdata3",
+      "name": "❓ ¿Hay Clientes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$input.all().length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_batch3",
+      "name": "📦 Procesar de a 1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1200,
+        280
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "n_draft",
+      "name": "🤖 IA: Generar Borrador LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1440,
+        280
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.OPENAI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({model:'gpt-4o-mini',temperature:0.7,max_tokens:300,messages:[{role:'system',content:'Eres el asistente de Juan Carlos, gerente comercial de La Falla DF (productora de servicios audiovisuales en el Eje Cafetero, Colombia). Redacta un mensaje de LinkedIn CORTO (máx 3 oraciones) en español, cálido y profesional, para conectar con este contacto. El objetivo es que piensen en La Falla cuando necesiten rodar en el Eje Cafetero. Usa detalles del perfil. Sin hashtags ni emojis.'},{role:'user',content:'Contacto: '+$json.nombre+'\\nRol: '+$json.rol+'\\nServicios: '+$json.servicios+'\\nNotas: '+$json.observaciones+'\\nAparece en '+$json.apariciones+' de nuestros archivos (hot lead)'}]}) }}"
+      }
+    },
+    {
+      "id": "n_parse3",
+      "name": "🔧 Parsear Borrador",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const draft = $input.item.json.choices?.[0]?.message?.content ?? '(sin borrador)';\nconst data = $('🏆 Top 5 Hot Leads').item.json;\nreturn { json: {\n  id: data.id,\n  nombre: data.nombre,\n  rol: data.rol,\n  redes: data.redes,\n  apariciones: data.apariciones,\n  draft: draft.trim(),\n}};"
+      }
+    },
+    {
+      "id": "n_agg3",
+      "name": "📋 Armar Mensaje WA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nlet msg = `📊 *Dashboard LinkedIn - ${new Date().toLocaleDateString('es-CO', {weekday:'long', day:'numeric', month:'long'})}*\\n\\n`;\nmsg += `Top ${items.length} clientes sin contacto en 30+ días:\\n\\n`;\nitems.forEach((item, i) => {\n  const d = item.json;\n  msg += `*${i+1}. ${d.nombre}* (${d.rol ?? 'sin rol'}) — 🔥×${d.apariciones}\\n`;\n  if (d.redes) msg += `LinkedIn: ${d.redes}\\n`;\n  msg += `💬 _${d.draft}_\\n\\n`;\n});\nmsg += `Para registrar que enviaste: responde */enviado <ID>*`;\nreturn [{ json: { message: msg } }];"
+      }
+    },
+    {
+      "id": "n_wa3",
+      "name": "📨 Enviar Borradores a JC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2160,
+        280
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE + '/conversations/' + $env.CHATWOOT_JUAN_CONVERSATION_ID + '/messages'}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{$env.CHATWOOT_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({content:$json.message,message_type:'outgoing',private:false}) }}"
+      }
+    },
+    {
+      "id": "n_nodata3",
+      "name": "⏭️ Sin Clientes Pendientes",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        460
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "🗓️ Lunes 8AM - LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "📋 Obtener Clientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Obtener Clientes": {
+      "main": [
+        [
+          {
+            "node": "🏆 Top 5 Hot Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🏆 Top 5 Hot Leads": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Hay Clientes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Hay Clientes?": {
+      "main": [
+        [
+          {
+            "node": "📦 Procesar de a 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⏭️ Sin Clientes Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Procesar de a 1": {
+      "main": [
+        [
+          {
+            "node": "🤖 IA: Generar Borrador LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📋 Armar Mensaje WA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 IA: Generar Borrador LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "🔧 Parsear Borrador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Parsear Borrador": {
+      "main": [
+        [
+          {
+            "node": "📦 Procesar de a 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Armar Mensaje WA": {
+      "main": [
+        [
+          {
+            "node": "📨 Enviar Borradores a JC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}

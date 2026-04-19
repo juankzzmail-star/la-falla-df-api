@@ -1,0 +1,248 @@
+{
+  "name": "La Falla | 05 - Registrar Interacción Manual",
+  "nodes": [
+    {
+      "id": "s5",
+      "name": "📋 Credenciales",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        60
+      ],
+      "parameters": {
+        "color": 3,
+        "width": 500,
+        "height": 320,
+        "content": "## WF5 — Registrar Interacción Manual\n\nEndpoint genérico para registrar interacciones desde Google Sheet u otras fuentes.\n\n**Payload esperado:**\n```json\n{\n  \"stakeholder_id\": 123,\n  \"campaign\": \"whatsapp_aliados_ondemand\",\n  \"canal\": \"whatsapp\",\n  \"direccion\": \"out\",\n  \"mensaje\": \"contacto sobre proyecto X\",\n  \"status\": \"sent\"\n}\n```\n\n**Auth:** Header `X-Api-Key` = `FASTAPI_API_KEY`\n\n**URL webhook:**\n`<N8N_HOST>/webhook/registrar-interaccion-lafalla`"
+      }
+    },
+    {
+      "id": "n_wh5",
+      "name": "🔗 Webhook Registrar Interacción",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        420
+      ],
+      "parameters": {
+        "path": "registrar-interaccion-lafalla",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      }
+    },
+    {
+      "id": "n_auth5",
+      "name": "🔐 Verificar API Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const key = $input.item.json.headers?.['x-api-key']\n         ?? $input.item.json.headers?.['X-Api-Key'] ?? '';\nconst expected = process.env.FASTAPI_API_KEY ?? '';\nreturn { json: {\n  authorized: expected !== '' && key === expected,\n  payload: $input.item.json.body ?? {},\n}};"
+      }
+    },
+    {
+      "id": "n_ifauth5",
+      "name": "🔐 ¿Autorizado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.authorized}}",
+              "operation": "true"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_log5",
+      "name": "📝 Registrar en FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        960,
+        320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_BASE_URL}}/interactions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.FASTAPI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({stakeholder_id:$json.payload.stakeholder_id??null,campaign:$json.payload.campaign??'manual',canal:$json.payload.canal??'whatsapp',direccion:$json.payload.direccion??'out',mensaje:$json.payload.mensaje??'',status:$json.payload.status??'sent'}) }}"
+      }
+    },
+    {
+      "id": "n_resp5_ok",
+      "name": "✅ Set Respuesta OK",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        1200,
+        320
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "status",
+              "value": "ok",
+              "type": "string"
+            },
+            {
+              "name": "message",
+              "value": "Interacción registrada",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_resp5_err",
+      "name": "🚫 Set Respuesta 401",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        960,
+        540
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "status",
+              "value": "unauthorized",
+              "type": "string"
+            },
+            {
+              "name": "message",
+              "value": "API key inválida",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_whr5",
+      "name": "📤 Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "🔗 Webhook Registrar Interacción": {
+      "main": [
+        [
+          {
+            "node": "🔐 Verificar API Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Verificar API Key": {
+      "main": [
+        [
+          {
+            "node": "🔐 ¿Autorizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 ¿Autorizado?": {
+      "main": [
+        [
+          {
+            "node": "📝 Registrar en FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🚫 Set Respuesta 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Registrar en FastAPI": {
+      "main": [
+        [
+          {
+            "node": "✅ Set Respuesta OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Set Respuesta OK": {
+      "main": [
+        [
+          {
+            "node": "📤 Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚫 Set Respuesta 401": {
+      "main": [
+        [
+          {
+            "node": "📤 Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}
