@@ -21,7 +21,7 @@ from .db import get_db
 from .models import Stakeholder, Interaction
 from .schemas import (
     ClassifyRequest, ClassifyResponse,
-    StakeholderCreate, StakeholderOut,
+    StakeholderCreate, StakeholderUpdate, StakeholderOut,
     InteractionCreate, InteractionOut,
     LinkedInIngest,
 )
@@ -83,6 +83,7 @@ def create_stakeholder(
     clas, razon = clasificar(data)
     data["clasificacion_negocio"] = clas
     data["clasificacion"] = "WHATSAPP_INBOUND"
+    data["activo"] = True
     row = Stakeholder(**data)
     db.add(row)
     db.commit()
@@ -96,11 +97,16 @@ def list_stakeholders(
     con_telefono: Optional[bool] = Query(None),
     sin_interaccion_dias: Optional[int] = Query(None, description="Excluye contactados en los últimos N días"),
     linkedin_url: Optional[str] = Query(None),
+    activo: Optional[bool] = Query(True, description="true (default) / false / null para todos"),
+    incluir_inactivos: bool = Query(False, description="Si true, ignora el filtro activo"),
     limit: int = Query(100, le=500),
     db: Session = Depends(get_db),
     _: str = Depends(verify_key),
 ):
     q = db.query(Stakeholder)
+
+    if not incluir_inactivos and activo is not None:
+        q = q.filter(Stakeholder.activo == activo)
 
     if clasificacion:
         q = q.filter(Stakeholder.clasificacion_negocio == clasificacion)
@@ -124,6 +130,84 @@ def list_stakeholders(
         q = q.filter(Stakeholder.id.notin_(interacted_ids))
 
     return q.limit(limit).all()
+
+
+@app.get("/stakeholders/{stakeholder_id}", response_model=StakeholderOut, tags=["stakeholders"])
+def get_stakeholder(
+    stakeholder_id: int,
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_key),
+):
+    row = db.query(Stakeholder).filter(Stakeholder.id == stakeholder_id).first()
+    if not row:
+        raise HTTPException(404, f"Stakeholder {stakeholder_id} not found")
+    return row
+
+
+@app.patch("/stakeholders/{stakeholder_id}", response_model=StakeholderOut, tags=["stakeholders"])
+def update_stakeholder(
+    stakeholder_id: int,
+    body: StakeholderUpdate,
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_key),
+):
+    row = db.query(Stakeholder).filter(Stakeholder.id == stakeholder_id).first()
+    if not row:
+        raise HTTPException(404, f"Stakeholder {stakeholder_id} not found")
+
+    updates = body.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(row, field, value)
+
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.delete("/stakeholders/{stakeholder_id}", tags=["stakeholders"])
+def delete_stakeholder(
+    stakeholder_id: int,
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_key),
+):
+    row = db.query(Stakeholder).filter(Stakeholder.id == stakeholder_id).first()
+    if not row:
+        raise HTTPException(404, f"Stakeholder {stakeholder_id} not found")
+
+    nombre = row.nombre
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "id": stakeholder_id, "nombre": nombre}
+
+
+@app.post("/stakeholders/{stakeholder_id}/deactivate", response_model=StakeholderOut, tags=["stakeholders"])
+def deactivate_stakeholder(
+    stakeholder_id: int,
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_key),
+):
+    row = db.query(Stakeholder).filter(Stakeholder.id == stakeholder_id).first()
+    if not row:
+        raise HTTPException(404, f"Stakeholder {stakeholder_id} not found")
+    row.activo = False
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.post("/stakeholders/{stakeholder_id}/activate", response_model=StakeholderOut, tags=["stakeholders"])
+def activate_stakeholder(
+    stakeholder_id: int,
+    db: Session = Depends(get_db),
+    _: str = Depends(verify_key),
+):
+    row = db.query(Stakeholder).filter(Stakeholder.id == stakeholder_id).first()
+    if not row:
+        raise HTTPException(404, f"Stakeholder {stakeholder_id} not found")
+    row.activo = True
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 # ---------------------------------------------------------------------------

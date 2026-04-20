@@ -41,11 +41,32 @@ class StakeholderCreate(BaseModel):
     fuente_hoja:   Optional[str] = None
 
 
+class StakeholderUpdate(BaseModel):
+    nombre:                Optional[str] = None
+    rol:                   Optional[str] = None
+    correo:                Optional[str] = None
+    telefono:              Optional[str] = None
+    ubicacion:             Optional[str] = None
+    direccion:             Optional[str] = None
+    nit:                   Optional[str] = None
+    observaciones:         Optional[str] = None
+    servicios:             Optional[str] = None
+    redes:                 Optional[str] = None
+    quien_contacta:        Optional[str] = None
+    linkedin_url:          Optional[str] = None
+    fuente_archivo:        Optional[str] = None
+    fuente_hoja:           Optional[str] = None
+    clasificacion_negocio: Optional[str] = None
+    activo:                Optional[bool] = None
+
+
 class StakeholderOut(StakeholderCreate):
     id:                    int
     clasificacion:         Optional[str] = None
     clasificacion_negocio: Optional[str] = None
+    activo:                Optional[bool] = True
     fecha_carga:           Optional[datetime] = None
+    fecha_actualizacion:   Optional[datetime] = None
 
     class Config:
         from_attributes = True

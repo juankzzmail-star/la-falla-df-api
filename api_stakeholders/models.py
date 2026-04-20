@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, Text, DateTime, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from .db import Base
 
@@ -24,7 +24,9 @@ class Stakeholder(Base):
     linkedin_url          = Column(Text)
     fuente_archivo        = Column(Text)
     fuente_hoja           = Column(Text)
+    activo                = Column(Boolean, nullable=False, server_default="true")
     fecha_carga           = Column(DateTime(timezone=True), server_default=func.now())
+    fecha_actualizacion   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Interaction(Base):
