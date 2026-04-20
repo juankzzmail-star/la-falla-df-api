@@ -2,13 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copiar auditoria_qa.py (clasificar() se importa directamente)
-COPY auditoria_qa.py ./auditoria_qa.py
-
-COPY api_stakeholders/requirements.txt ./requirements.txt
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api_stakeholders/ ./api_stakeholders/
+COPY auditoria_qa.py ./auditoria_qa.py
+
+COPY . ./api_stakeholders/
 
 EXPOSE 8000
 
