@@ -1,0 +1,160 @@
+{
+  "name": "La Falla GM | 03 - Reporte Semanal CEO",
+  "nodes": [
+    {
+      "id": "s3",
+      "name": "📋 Instrucciones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 6,
+        "width": 520,
+        "height": 260,
+        "content": "## WF-GM-03 — Reporte Semanal CEO (lunes 8AM CO)\n\n**Dispara:** Lunes 13:00 UTC (= 8:00 AM Colombia)\n\nObtiene KPIs + alertas → OpenAI genera resumen ejecutivo ≤300 palabras → envía a Clementino por Chatwoot.\n\n**Vars requeridas:**\n- `FASTAPI_GM_BASE_URL`, `FASTAPI_GM_API_KEY`\n- `OPENAI_API_KEY`\n- `CHATWOOT_API_BASE`, `CHATWOOT_API_TOKEN`\n- `CHATWOOT_CLEMENTINO_CONV_ID`"
+      }
+    },
+    {
+      "id": "n_cron3",
+      "name": "⏰ Lunes 8AM CO",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 380],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 13 * * 1" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_summary3",
+      "name": "📊 GET Dashboard Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 380],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FASTAPI_GM_BASE_URL}}/dashboard/summary",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{$env.FASTAPI_GM_API_KEY}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_alerts3",
+      "name": "🚨 GET Dashboard Alerts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 380],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FASTAPI_GM_BASE_URL}}/dashboard/alerts",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{$env.FASTAPI_GM_API_KEY}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_build_prompt",
+      "name": "🧠 Construir Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 380],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst summary = items[0]?.json ?? [];\nconst alerts  = items[1]?.json ?? [];\n\nconst summaryArr = Array.isArray(summary) ? summary : [summary];\nconst alertsArr  = Array.isArray(alerts)  ? alerts  : [alerts];\n\nconst semanaStr = new Date().toLocaleDateString('es-CO', { weekday:'long', year:'numeric', month:'long', day:'numeric' });\n\nconst kpiBlock = summaryArr.map(a =>\n  `• ${a.area}: ${a.pct_real}% real vs ${a.pct_planificado}% planificado | ${a.completadas}/${a.total_tareas} tareas | ${a.bloqueadas} bloqueadas | ${a.vencidas} vencidas | semáforo: ${a.semaforo}`\n).join('\\n');\n\nconst alertBlock = alertsArr.length === 0 ? 'Sin alertas críticas.' :\n  alertsArr.slice(0, 10).map(a => `• [${a.tipo}] ${a.descripcion}`).join('\\n');\n\nconst userPrompt = `Hoy es ${semanaStr}. Genera un reporte ejecutivo semanal para Clementino (CEO de La Falla DF), empresa de producción audiovisual y consultoría en Colombia.\\n\\nKPIs por área:\\n${kpiBlock}\\n\\nAlertas:\\n${alertBlock}\\n\\nEl reporte debe:\\n1. Empezar con un saludo breve\\n2. Destacar lo más importante (logros + riesgos)\\n3. Dar 2-3 recomendaciones concretas de acción\\n4. Cerrar con motivación\\n5. Ser máximo 250 palabras\\n6. Usar emojis con moderación`;\n\nreturn [{ json: { userPrompt } }];"
+      }
+    },
+    {
+      "id": "n_openai3",
+      "name": "🤖 OpenAI Resumen Ejecutivo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1200, 380],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.OPENAI_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', messages: [ { role: 'system', content: 'Eres el asistente estratégico de Clementino, CEO de La Falla DF. Generas reportes ejecutivos concisos, directos y accionables. Escribes en español colombiano profesional.' }, { role: 'user', content: $json.userPrompt } ], temperature: 0.6, max_tokens: 600 }) }}"
+      }
+    },
+    {
+      "id": "n_extract3",
+      "name": "📝 Extraer Texto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 380],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const response = $input.item.json;\nconst text = response.choices?.[0]?.message?.content ?? 'Sin respuesta de IA';\nconst fecha = new Date().toLocaleDateString('es-CO', {day:'numeric', month:'long', year:'numeric'});\nreturn { json: { content: `📊 *Reporte Semanal — ${fecha}*\\n\\n${text}` } };"
+      }
+    },
+    {
+      "id": "n_chatwoot3",
+      "name": "📱 Chatwoot → Clementino",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1680, 380],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE}}/conversations/={{$env.CHATWOOT_CLEMENTINO_CONV_ID}}/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "api_access_token", "value": "={{$env.CHATWOOT_API_TOKEN}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, message_type: 'outgoing', private: false }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "⏰ Lunes 8AM CO": {
+      "main": [[{ "node": "📊 GET Dashboard Summary", "type": "main", "index": 0 }]]
+    },
+    "📊 GET Dashboard Summary": {
+      "main": [[{ "node": "🚨 GET Dashboard Alerts", "type": "main", "index": 0 }]]
+    },
+    "🚨 GET Dashboard Alerts": {
+      "main": [[{ "node": "🧠 Construir Prompt", "type": "main", "index": 0 }]]
+    },
+    "🧠 Construir Prompt": {
+      "main": [[{ "node": "🤖 OpenAI Resumen Ejecutivo", "type": "main", "index": 0 }]]
+    },
+    "🤖 OpenAI Resumen Ejecutivo": {
+      "main": [[{ "node": "📝 Extraer Texto", "type": "main", "index": 0 }]]
+    },
+    "📝 Extraer Texto": {
+      "main": [[{ "node": "📱 Chatwoot → Clementino", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}

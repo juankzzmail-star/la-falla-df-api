@@ -1,0 +1,212 @@
+{
+  "name": "La Falla GM | 01 - Salud Stakeholders Diaria",
+  "nodes": [
+    {
+      "id": "s1",
+      "name": "📋 Instrucciones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 3,
+        "width": 560,
+        "height": 340,
+        "content": "## WF-GM-01 — Salud de Stakeholders (cron 6AM CO)\n\n**Vars de entorno requeridas en n8n:**\n- `FASTAPI_BASE_URL`       = http://api-stakeholders:8000\n- `FASTAPI_API_KEY`        = clave compartida\n- `FASTAPI_GM_BASE_URL`    = http://api-gerencia:8000\n- `FASTAPI_GM_API_KEY`     = clave compartida\n- `CHATWOOT_API_BASE`      = URL base Chatwoot\n- `CHATWOOT_API_TOKEN`     = token Chatwoot\n- `CHATWOOT_CLEMENTINO_CONV_ID` = ID conversación Clementino\n\n**Reglas de salud:**\n- 🟢 VERDE: días_sin_contacto ≤ 15 Y último resultado ≠ bloqueo\n- 🔴 ROJO: resultado = bloqueo O conflicto en observaciones\n- 🟡 AMARILLO: días_sin_contacto > 30 O resultado = negativo"
+      }
+    },
+    {
+      "id": "n_cron",
+      "name": "⏰ Cron 6AM CO",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 420],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 11 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_get_sh",
+      "name": "📥 GET Stakeholders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 420],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FASTAPI_BASE_URL}}/stakeholders?limit=1000",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{$env.FASTAPI_API_KEY}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_get_int",
+      "name": "📥 GET Interacciones (60d)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 420],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.FASTAPI_BASE_URL}}/interactions?limit=5000",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{$env.FASTAPI_API_KEY}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_calc",
+      "name": "🧮 Calcular Salud",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 420],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const stakeholders = $input.all()[0].json;\nconst interactions  = $input.all()[1]?.json ?? [];\n\nconst stArr = Array.isArray(stakeholders) ? stakeholders : [];\nconst intArr = Array.isArray(interactions) ? interactions : [];\n\nconst today = new Date();\n\n// Agrupar interacciones por stakeholder_id → última interacción\nconst lastInt = {};\nfor (const i of intArr) {\n  const sid = i.stakeholder_id;\n  if (!sid) continue;\n  if (!lastInt[sid] || new Date(i.timestamp) > new Date(lastInt[sid].timestamp)) {\n    lastInt[sid] = i;\n  }\n}\n\nconst result = [];\nfor (const sh of stArr) {\n  const sid = sh.id;\n  const li = lastInt[sid];\n  const lastDate = li ? new Date(li.timestamp) : null;\n  const dias = lastDate\n    ? Math.floor((today - lastDate) / 86400000)\n    : 999;\n  const resultado = li?.resultado ?? 'neutro';\n\n  let salud, razon;\n  if (resultado === 'bloqueo') {\n    salud = 'rojo';\n    razon = 'Última interacción marcada como bloqueo';\n  } else if (resultado === 'negativo') {\n    salud = 'rojo';\n    razon = 'Última interacción negativa';\n  } else if (dias > 30) {\n    salud = 'amarillo';\n    razon = `Sin contacto hace ${dias} días`;\n  } else if (dias > 15) {\n    salud = 'amarillo';\n    razon = `Sin contacto hace ${dias} días (zona de riesgo)`;\n  } else {\n    salud = 'verde';\n    razon = `Contacto hace ${dias} días, resultado ${resultado}`;\n  }\n\n  result.push({\n    stakeholder_id: sid,\n    salud,\n    razon,\n    dias_sin_contacto: dias,\n    resultado_ultima_interaccion: resultado\n  });\n}\n\nreturn result.map(r => ({ json: r }));"
+      }
+    },
+    {
+      "id": "n_batch",
+      "name": "📦 Agrupar en Lotes de 50",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1200, 420],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "batch",
+        "include": "allFields"
+      }
+    },
+    {
+      "id": "n_post_health",
+      "name": "📤 POST /stakeholder-health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1440, 420],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FASTAPI_GM_BASE_URL}}/stakeholder-health",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{$env.FASTAPI_GM_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify($json.batch)}}"
+      }
+    },
+    {
+      "id": "n_count_rojos",
+      "name": "🔴 ¿Hay rojos?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 420],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst batch = items[0]?.json?.batch ?? [];\nconst rojos    = batch.filter(i => i.salud === 'rojo').length;\nconst amarillos = batch.filter(i => i.salud === 'amarillo').length;\nconst verdes   = batch.filter(i => i.salud === 'verde').length;\nreturn [{ json: { rojos, amarillos, verdes, total: batch.length, alertar: rojos > 0 || amarillos > 5 } }];"
+      }
+    },
+    {
+      "id": "n_if_alerta",
+      "name": "❓ ¿Alertar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1920, 420],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$json.alertar}}", "operation": "true" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_msg_alerta",
+      "name": "✍️ Formatear Alerta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 320],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const d = $input.first().json;\nconst fecha = new Date().toLocaleDateString('es-CO', {weekday:'long',day:'numeric',month:'long'});\nconst msg = `🚨 *Reporte de Salud — ${fecha}*\\n\\n` +\n  `🔴 Rojos: ${d.rojos}\\n` +\n  `🟡 Amarillos: ${d.amarillos}\\n` +\n  `🟢 Verdes: ${d.verdes}\\n\\n` +\n  `Total stakeholders analizados: ${d.total}\\n\\n` +\n  `Revisa el dashboard para ver detalles: https://la-falla-df-api-gm.7ubo23.easypanel.host/stakeholder-health/current?salud=rojo`;\nreturn [{ json: { content: msg } }];"
+      }
+    },
+    {
+      "id": "n_chatwoot",
+      "name": "📱 Chatwoot → Clementino",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2400, 320],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE}}/conversations/={{$env.CHATWOOT_CLEMENTINO_CONV_ID}}/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "api_access_token", "value": "={{$env.CHATWOOT_API_TOKEN}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, message_type: 'outgoing', private: false }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "⏰ Cron 6AM CO": {
+      "main": [[{ "node": "📥 GET Stakeholders", "type": "main", "index": 0 }]]
+    },
+    "📥 GET Stakeholders": {
+      "main": [[{ "node": "📥 GET Interacciones (60d)", "type": "main", "index": 0 }]]
+    },
+    "📥 GET Interacciones (60d)": {
+      "main": [[{ "node": "🧮 Calcular Salud", "type": "main", "index": 0 }]]
+    },
+    "🧮 Calcular Salud": {
+      "main": [[{ "node": "📦 Agrupar en Lotes de 50", "type": "main", "index": 0 }]]
+    },
+    "📦 Agrupar en Lotes de 50": {
+      "main": [[{ "node": "📤 POST /stakeholder-health", "type": "main", "index": 0 }]]
+    },
+    "📤 POST /stakeholder-health": {
+      "main": [[{ "node": "🔴 ¿Hay rojos?", "type": "main", "index": 0 }]]
+    },
+    "🔴 ¿Hay rojos?": {
+      "main": [[{ "node": "❓ ¿Alertar?", "type": "main", "index": 0 }]]
+    },
+    "❓ ¿Alertar?": {
+      "main": [
+        [{ "node": "✍️ Formatear Alerta", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "✍️ Formatear Alerta": {
+      "main": [[{ "node": "📱 Chatwoot → Clementino", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}

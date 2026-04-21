@@ -1,0 +1,175 @@
+{
+  "name": "La Falla GM | 02 - Notificaciones a Clementino",
+  "nodes": [
+    {
+      "id": "s2",
+      "name": "📋 Instrucciones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 5,
+        "width": 540,
+        "height": 300,
+        "content": "## WF-GM-02 — Notificaciones GM (webhook desde FastAPI)\n\n**Webhook URL:** `<N8N_HOST>/webhook/gm-notificaciones`\n\n**Tipos de evento (`tipo`):**\n- `hito_completado` → notifica avance de plan\n- `tarea_bloqueada` → alerta de bloqueo urgente\n\n**Auth:** Header `X-Webhook-Secret` = `N8N_WEBHOOK_SECRET`\n\n**Vars requeridas:**\n- `N8N_WEBHOOK_SECRET`\n- `CHATWOOT_API_BASE`, `CHATWOOT_API_TOKEN`\n- `CHATWOOT_CLEMENTINO_CONV_ID`"
+      }
+    },
+    {
+      "id": "n_wh2",
+      "name": "🔗 Webhook gm-notificaciones",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "parameters": {
+        "path": "gm-notificaciones",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "responseCode": 200
+      }
+    },
+    {
+      "id": "n_auth2",
+      "name": "🔐 Verificar Secret",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 400],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const secret = $input.item.json.headers?.['x-webhook-secret'] ?? '';\nconst expected = process.env.N8N_WEBHOOK_SECRET ?? '';\nconst body = $input.item.json.body ?? $input.item.json;\nreturn { json: {\n  authorized: expected !== '' && secret === expected,\n  tipo: body.tipo ?? '',\n  task_id: body.task_id ?? null,\n  titulo: body.titulo ?? '',\n  area: body.area ?? '',\n  responsable: body.responsable ?? '',\n  motivo: body.motivo ?? '',\n  plan_id: body.plan_id ?? null,\n  pct_completado_real: body.pct_completado_real ?? 0,\n}};"
+      }
+    },
+    {
+      "id": "n_ifauth2",
+      "name": "🔐 ¿Autorizado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 400],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$json.authorized}}", "operation": "true" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_sw2",
+      "name": "🔀 Switch por Tipo",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [960, 300],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  { "leftValue": "={{$json.tipo}}", "rightValue": "hito_completado", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "outputKey": "hito"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  { "leftValue": "={{$json.tipo}}", "rightValue": "tarea_bloqueada", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "outputKey": "bloqueada"
+            }
+          ]
+        },
+        "fallbackOutput": "none"
+      }
+    },
+    {
+      "id": "n_fmt_hito",
+      "name": "✍️ Mensaje Hito",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 200],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const d = $input.item.json;\nconst pct = typeof d.pct_completado_real === 'number' ? d.pct_completado_real.toFixed(1) : '?';\nreturn { json: { content:\n  `✅ *Hito completado — ${d.area}*\\n\\n` +\n  `📌 *${d.titulo}*\\n` +\n  `👤 Responsable: ${d.responsable}\\n` +\n  `📊 Avance del plan: ${pct}%\\n\\n` +\n  `¡Seguimos avanzando hacia la meta! 🚀`\n}};"
+      }
+    },
+    {
+      "id": "n_fmt_bloqueo",
+      "name": "✍️ Mensaje Bloqueo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 420],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const d = $input.item.json;\nreturn { json: { content:\n  `🔴 *Tarea bloqueada — ${d.area}*\\n\\n` +\n  `📌 *${d.titulo}*\\n` +\n  `👤 Responsable: ${d.responsable}\\n` +\n  `🚫 Motivo: ${d.motivo}\\n\\n` +\n  `Requiere tu atención para desbloquear.`\n}};"
+      }
+    },
+    {
+      "id": "n_merge2",
+      "name": "🔗 Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1440, 320],
+      "parameters": { "mode": "passThrough", "output": "input1" }
+    },
+    {
+      "id": "n_chatwoot2",
+      "name": "📱 Chatwoot → Clementino",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1680, 320],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATWOOT_API_BASE}}/conversations/={{$env.CHATWOOT_CLEMENTINO_CONV_ID}}/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "api_access_token", "value": "={{$env.CHATWOOT_API_TOKEN}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, message_type: 'outgoing', private: false }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "🔗 Webhook gm-notificaciones": {
+      "main": [[{ "node": "🔐 Verificar Secret", "type": "main", "index": 0 }]]
+    },
+    "🔐 Verificar Secret": {
+      "main": [[{ "node": "🔐 ¿Autorizado?", "type": "main", "index": 0 }]]
+    },
+    "🔐 ¿Autorizado?": {
+      "main": [
+        [{ "node": "🔀 Switch por Tipo", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "🔀 Switch por Tipo": {
+      "main": [
+        [{ "node": "✍️ Mensaje Hito", "type": "main", "index": 0 }],
+        [{ "node": "✍️ Mensaje Bloqueo", "type": "main", "index": 0 }]
+      ]
+    },
+    "✍️ Mensaje Hito": {
+      "main": [[{ "node": "🔗 Merge", "type": "main", "index": 0 }]]
+    },
+    "✍️ Mensaje Bloqueo": {
+      "main": [[{ "node": "🔗 Merge", "type": "main", "index": 1 }]]
+    },
+    "🔗 Merge": {
+      "main": [[{ "node": "📱 Chatwoot → Clementino", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}

@@ -1,0 +1,229 @@
+{
+  "name": "La Falla GM | 04 - Sync Google Tasks & Calendar",
+  "nodes": [
+    {
+      "id": "s4",
+      "name": "📋 Instrucciones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 60],
+      "parameters": {
+        "color": 4,
+        "width": 580,
+        "height": 360,
+        "content": "## WF-GM-04 — Sync PostgreSQL → Google Tasks + Calendar\n\n**Webhook URL:** `<N8N_HOST>/webhook/gm-sync-google`\n\n**Flujo:**\n1. FastAPI dispara al crear/actualizar/completar tarea\n2. Si `google_task_id` existe → actualiza en Google Tasks\n3. Si no → crea en Google Tasks → guarda ID en FastAPI\n4. Si `es_hito=true` y no tiene `google_calendar_event_id` → crea evento en Calendar → guarda ID\n\n**Credenciales n8n requeridas:**\n- `Google Tasks OAuth2` (configurar en n8n Credentials)\n- `Google Calendar OAuth2`\n\n**Vars de entorno:**\n- `N8N_WEBHOOK_SECRET`, `FASTAPI_GM_BASE_URL`, `FASTAPI_GM_API_KEY`\n- `GOOGLE_TASKS_LIST_ID` = ID de la lista de Google Tasks\n- `GOOGLE_CALENDAR_ID`  = ID del calendario (ej: primary)"
+      }
+    },
+    {
+      "id": "n_wh4",
+      "name": "🔗 Webhook gm-sync-google",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 460],
+      "parameters": {
+        "path": "gm-sync-google",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "responseCode": 200
+      }
+    },
+    {
+      "id": "n_auth4",
+      "name": "🔐 Verificar Secret",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 460],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const secret = $input.item.json.headers?.['x-webhook-secret'] ?? '';\nconst expected = process.env.N8N_WEBHOOK_SECRET ?? '';\nconst b = $input.item.json.body ?? $input.item.json;\nreturn { json: {\n  authorized: expected !== '' && secret === expected,\n  action: b.action ?? 'updated',\n  task_id: b.task_id ?? null,\n  titulo: b.titulo ?? '',\n  responsable: b.responsable ?? '',\n  area: b.area ?? '',\n  estado: b.estado ?? 'pendiente',\n  fecha_vencimiento: b.fecha_vencimiento ?? null,\n  es_hito: b.es_hito ?? false,\n  google_task_id: b.google_task_id ?? null,\n  google_calendar_event_id: b.google_calendar_event_id ?? null,\n  plan_id: b.plan_id ?? null,\n}};"
+      }
+    },
+    {
+      "id": "n_ifauth4",
+      "name": "🔐 ¿Autorizado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 460],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$json.authorized}}", "operation": "true" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_if_gtask",
+      "name": "❓ ¿Tiene google_task_id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 360],
+      "parameters": {
+        "conditions": {
+          "string": [
+            { "value1": "={{$json.google_task_id}}", "operation": "isNotEmpty" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_update_gtask",
+      "name": "✏️ Update Google Task",
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [1200, 260],
+      "credentials": { "googleTasksOAuth2Api": { "id": "google-tasks-cred", "name": "Google Tasks" } },
+      "parameters": {
+        "operation": "update",
+        "listId": "={{$env.GOOGLE_TASKS_LIST_ID}}",
+        "taskId": "={{$json.google_task_id}}",
+        "updateFields": {
+          "title": "={{$json.titulo}} [{{$json.area}}] — {{$json.responsable}}",
+          "status": "={{$json.estado === 'completada' ? 'completed' : 'needsAction'}}",
+          "due": "={{$json.fecha_vencimiento ? $json.fecha_vencimiento + 'T00:00:00.000Z' : undefined}}"
+        }
+      }
+    },
+    {
+      "id": "n_create_gtask",
+      "name": "➕ Create Google Task",
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [1200, 480],
+      "credentials": { "googleTasksOAuth2Api": { "id": "google-tasks-cred", "name": "Google Tasks" } },
+      "parameters": {
+        "operation": "create",
+        "listId": "={{$env.GOOGLE_TASKS_LIST_ID}}",
+        "title": "={{$json.titulo}} [{{$json.area}}] — {{$json.responsable}}",
+        "additionalFields": {
+          "notes": "=Área: {{$json.area}} | Responsable: {{$json.responsable}} | Plan ID: {{$json.plan_id}}",
+          "due": "={{$json.fecha_vencimiento ? $json.fecha_vencimiento + 'T00:00:00.000Z' : undefined}}"
+        }
+      }
+    },
+    {
+      "id": "n_save_gtask_id",
+      "name": "💾 Guardar google_task_id en FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1440, 480],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.FASTAPI_GM_BASE_URL}}/tasks/={{$('🔐 Verificar Secret').item.json.task_id}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{$env.FASTAPI_GM_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ google_task_id: $json.id }) }}"
+      }
+    },
+    {
+      "id": "n_if_hito",
+      "name": "❓ ¿Es hito sin evento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1680, 400],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$('🔐 Verificar Secret').item.json.es_hito}}", "operation": "true" }
+          ],
+          "string": [
+            { "value1": "={{$('🔐 Verificar Secret').item.json.google_calendar_event_id}}", "operation": "isEmpty" }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "n_create_event",
+      "name": "📅 Create Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [1920, 300],
+      "credentials": { "googleCalendarOAuth2Api": { "id": "google-calendar-cred", "name": "Google Calendar" } },
+      "parameters": {
+        "operation": "create",
+        "calendar": { "__rl": true, "value": "={{$env.GOOGLE_CALENDAR_ID}}", "mode": "id" },
+        "start": "={{$('🔐 Verificar Secret').item.json.fecha_vencimiento}}",
+        "end": "={{$('🔐 Verificar Secret').item.json.fecha_vencimiento}}",
+        "additionalFields": {
+          "summary": "=🏁 HITO: {{$('🔐 Verificar Secret').item.json.titulo}}",
+          "description": "=Área: {{$('🔐 Verificar Secret').item.json.area}}\nResponsable: {{$('🔐 Verificar Secret').item.json.responsable}}\nPlan ID: {{$('🔐 Verificar Secret').item.json.plan_id}}"
+        }
+      }
+    },
+    {
+      "id": "n_save_event_id",
+      "name": "💾 Guardar event_id en FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2160, 300],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.FASTAPI_GM_BASE_URL}}/tasks/={{$('🔐 Verificar Secret').item.json.task_id}}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "={{$env.FASTAPI_GM_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ google_calendar_event_id: $json.id }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "🔗 Webhook gm-sync-google": {
+      "main": [[{ "node": "🔐 Verificar Secret", "type": "main", "index": 0 }]]
+    },
+    "🔐 Verificar Secret": {
+      "main": [[{ "node": "🔐 ¿Autorizado?", "type": "main", "index": 0 }]]
+    },
+    "🔐 ¿Autorizado?": {
+      "main": [
+        [{ "node": "❓ ¿Tiene google_task_id?", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "❓ ¿Tiene google_task_id?": {
+      "main": [
+        [{ "node": "✏️ Update Google Task", "type": "main", "index": 0 }],
+        [{ "node": "➕ Create Google Task", "type": "main", "index": 0 }]
+      ]
+    },
+    "✏️ Update Google Task": {
+      "main": [[{ "node": "❓ ¿Es hito sin evento?", "type": "main", "index": 0 }]]
+    },
+    "➕ Create Google Task": {
+      "main": [[{ "node": "💾 Guardar google_task_id en FastAPI", "type": "main", "index": 0 }]]
+    },
+    "💾 Guardar google_task_id en FastAPI": {
+      "main": [[{ "node": "❓ ¿Es hito sin evento?", "type": "main", "index": 0 }]]
+    },
+    "❓ ¿Es hito sin evento?": {
+      "main": [
+        [{ "node": "📅 Create Calendar Event", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "📅 Create Calendar Event": {
+      "main": [[{ "node": "💾 Guardar event_id en FastAPI", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  }
+}
