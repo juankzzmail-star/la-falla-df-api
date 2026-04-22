@@ -71,6 +71,54 @@ def classify_contact(
 
 
 # ---------------------------------------------------------------------------
+# Helpers: routing de extras + reciclado de IDs
+# ---------------------------------------------------------------------------
+_STAKEHOLDER_COLS = set(Stakeholder.__table__.columns.keys())
+
+
+def _split_known_and_extras(data: dict) -> dict:
+    """
+    Mueve cualquier campo que no exista como columna real en
+    `stakeholders_master` dentro del dict `extras`. Así el cliente
+    (Apps Script) puede mandar columnas nuevas sin tocar la API.
+    """
+    extras = dict(data.pop("extras", None) or {})
+    for k in list(data.keys()):
+        if k not in _STAKEHOLDER_COLS:
+            val = data.pop(k)
+            if val not in (None, ""):
+                extras[k] = val
+    data["extras"] = extras
+    return data
+
+
+def _next_recycled_id(db: Session) -> int:
+    """
+    Devuelve el menor ID libre (incluye huecos por eliminación previa).
+    Si la tabla está vacía, devuelve 1.
+    """
+    sql = text("""
+        SELECT COALESCE(MIN(t.id), 1) AS next_id
+        FROM generate_series(
+            1,
+            COALESCE((SELECT MAX(id) FROM stakeholders_master), 0) + 1
+        ) AS t(id)
+        WHERE t.id NOT IN (SELECT id FROM stakeholders_master)
+    """)
+    return int(db.execute(sql).scalar() or 1)
+
+
+def _sync_sequence(db: Session) -> None:
+    """Mantiene el sequence de Postgres alineado al MAX(id) vigente."""
+    db.execute(text("""
+        SELECT setval(
+            'stakeholders_master_id_seq',
+            GREATEST((SELECT COALESCE(MAX(id), 0) FROM stakeholders_master), 1)
+        )
+    """))
+
+
+# ---------------------------------------------------------------------------
 # /stakeholders
 # ---------------------------------------------------------------------------
 @app.post("/stakeholders", response_model=StakeholderOut, tags=["stakeholders"])
@@ -80,14 +128,21 @@ def create_stakeholder(
     _: str = Depends(verify_key),
 ):
     data = body.model_dump()
-    clas, razon = clasificar(data)
+    data = _split_known_and_extras(data)
+
+    clas, razon = clasificar({**data, **(data.get("extras") or {})})
     data["clasificacion_negocio"] = clas
     data["clasificacion"] = "WHATSAPP_INBOUND"
     data["activo"] = True
+    data["id"] = _next_recycled_id(db)
+
     row = Stakeholder(**data)
     db.add(row)
     db.commit()
     db.refresh(row)
+
+    _sync_sequence(db)
+    db.commit()
     return row
 
 
@@ -99,11 +154,11 @@ def list_stakeholders(
     linkedin_url: Optional[str] = Query(None),
     activo: Optional[bool] = Query(True, description="true (default) / false / null para todos"),
     incluir_inactivos: bool = Query(False, description="Si true, ignora el filtro activo"),
-    limit: int = Query(100, le=500),
+    limit: int = Query(2000, le=10000),
     db: Session = Depends(get_db),
     _: str = Depends(verify_key),
 ):
-    q = db.query(Stakeholder)
+    q = db.query(Stakeholder).order_by(Stakeholder.id.asc())
 
     if not incluir_inactivos and activo is not None:
         q = q.filter(Stakeholder.activo == activo)
@@ -156,8 +211,23 @@ def update_stakeholder(
         raise HTTPException(404, f"Stakeholder {stakeholder_id} not found")
 
     updates = body.model_dump(exclude_unset=True)
+
+    # Campos desconocidos → merge en el JSONB extras (sin borrar los ya existentes)
+    extras_in = updates.pop("extras", None)
+    unknown = {}
+    for k in list(updates.keys()):
+        if k not in _STAKEHOLDER_COLS:
+            unknown[k] = updates.pop(k)
+
     for field, value in updates.items():
         setattr(row, field, value)
+
+    if extras_in or unknown:
+        merged = dict(row.extras or {})
+        if extras_in:
+            merged.update(extras_in)
+        merged.update(unknown)
+        row.extras = merged
 
     db.commit()
     db.refresh(row)
@@ -176,6 +246,8 @@ def delete_stakeholder(
 
     nombre = row.nombre
     db.delete(row)
+    db.commit()
+    _sync_sequence(db)
     db.commit()
     return {"deleted": True, "id": stakeholder_id, "nombre": nombre}
 

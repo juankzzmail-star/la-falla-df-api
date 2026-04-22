@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  Stakeholders La Falla DF — Apps Script
+ *  Stakeholders La Falla DF — Apps Script (v2: headers dinámicos + extras)
  * ============================================================================
  *  Sincroniza la hoja "Stakeholders" con la API FastAPI (api-stakeholders)
  *  que corre en EasyPanel, la cual a su vez escribe en Postgres.
@@ -10,35 +10,61 @@
  *    Cron cada 5 min             →  refreshFromPostgres()  →  pull completo
  *    Menú "La Falla DF"          →  hard delete / activar / desactivar
  *
+ *  COLUMNAS DINÁMICAS:
+ *    La fila 1 del Sheet es la fuente de verdad para los nombres de columna.
+ *    · Cabeceras que coincidan con columnas reales de Postgres (BASE_COLS)
+ *      se mapean a sus campos directos.
+ *    · Cualquier cabecera desconocida se guarda en el campo JSONB `extras`
+ *      sin tocar el esquema. Así cualquiera puede agregar una columna
+ *      nueva en el Sheet y su valor queda persistido en Postgres.
+ *
  *  SETUP (una sola vez):
- *    1) En la hoja, tab llamado "Stakeholders" con esta fila 1 (encabezados):
+ *    1) Tab llamado "Stakeholders". Fila 1 con nombres de columna.
+ *       Base mínima recomendada:
  *         id | nombre | rol | correo | telefono | ubicacion | direccion |
- *         clasificacion_negocio | observaciones | servicios | linkedin_url |
- *         activo | fecha_actualizacion
+ *         clasificacion_negocio | observaciones | observaciones_post_contacto |
+ *         servicios | linkedin_url | activo | fecha_actualizacion
+ *       Puedes agregar columnas libres (ej. "prioridad", "nota_interna").
  *    2) Extensiones → Apps Script → pegar este archivo completo.
- *    3) Proyecto → Configuración → Propiedades del script → agregar:
+ *    3) Proyecto → Configuración → Propiedades del script:
  *         API_BASE_URL = https://<tu-api-stakeholders>.easypanel.host
- *         API_KEY      = <misma FASTAPI_API_KEY que pusiste en EasyPanel>
- *    4) Correr una vez setupTriggers() desde el editor (autoriza permisos).
- *       Eso crea:
- *         - onEditInstallable  → dispara en cada edit
- *         - refreshFromPostgres → cada 5 min
- *    5) Correr refreshFromPostgres() manualmente la primera vez para poblar.
+ *         API_KEY      = <misma FASTAPI_API_KEY del servidor>
+ *    4) Correr setupTriggers() una vez (autoriza permisos).
+ *    5) Correr refreshFromPostgres() para poblar.
  * ============================================================================
  */
 
 const SHEET_NAME = 'Stakeholders';
-const COLUMNS = [
-  'id', 'nombre', 'rol', 'correo', 'telefono', 'ubicacion',
-  'direccion', 'clasificacion_negocio', 'observaciones', 'servicios',
-  'linkedin_url', 'activo', 'fecha_actualizacion'
+
+// Columnas que existen como columna real en Postgres `stakeholders_master`.
+// Todo lo que NO esté aquí se rutea al JSONB `extras` automáticamente.
+const BASE_COLS = [
+  'id', 'nombre', 'rol', 'correo', 'telefono', 'ubicacion', 'direccion',
+  'nit', 'observaciones', 'observaciones_post_contacto', 'servicios',
+  'redes', 'quien_contacta', 'clasificacion', 'clasificacion_negocio',
+  'linkedin_url', 'fuente_archivo', 'fuente_hoja', 'activo',
+  'fecha_carga', 'fecha_actualizacion'
 ];
-const ID_COL = 1;
-const ACTIVO_COL = 12;
-const FECHA_ACT_COL = 13;
+const BASE_SET = new Set(BASE_COLS);
+
+// Columnas calculadas o manejadas por el servidor — no se envían en edits.
+const SERVER_MANAGED = new Set([
+  'id', 'fecha_carga', 'fecha_actualizacion', 'clasificacion'
+]);
 
 function _props() { return PropertiesService.getScriptProperties(); }
 function _sheet() { return SpreadsheetApp.getActive().getSheetByName(SHEET_NAME); }
+
+function _headers(sheet) {
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return [];
+  return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map((h) => String(h || '').trim());
+}
+
+function _indexOf(headers, name) {
+  for (let i = 0; i < headers.length; i++) if (headers[i] === name) return i;
+  return -1;
+}
 
 function _apiCall(method, path, payload) {
   const base = _props().getProperty('API_BASE_URL');
@@ -56,6 +82,44 @@ function _apiCall(method, path, payload) {
   const code = resp.getResponseCode();
   if (code >= 400) throw new Error(`API ${method} ${path} → ${code}: ${resp.getContentText()}`);
   return JSON.parse(resp.getContentText() || '{}');
+}
+
+function _normalize(h, v) {
+  // Normaliza tipos para que Postgres reciba lo esperado
+  if (v === '' || v === null || v === undefined) return null;
+  if (h === 'activo') {
+    if (typeof v === 'boolean') return v;
+    const s = String(v).trim().toUpperCase();
+    return s === 'TRUE' || s === 'VERDADERO' || s === '1' || s === 'SI' || s === 'SÍ';
+  }
+  if (h === 'telefono') return String(v);
+  return v;
+}
+
+function _buildPayload(headers, rowValues) {
+  const payload = {};
+  const extras = {};
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i];
+    if (!h || SERVER_MANAGED.has(h)) continue;
+    const v = _normalize(h, rowValues[i]);
+    if (BASE_SET.has(h)) {
+      payload[h] = v;
+    } else {
+      extras[h] = v;
+    }
+  }
+  payload.extras = extras;
+  return payload;
+}
+
+function _rowFromApi(headers, obj) {
+  const extras = obj.extras || {};
+  return headers.map((h) => {
+    if (!h) return '';
+    if (BASE_SET.has(h)) return (obj[h] !== undefined && obj[h] !== null) ? obj[h] : '';
+    return (extras[h] !== undefined && extras[h] !== null) ? extras[h] : '';
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -86,56 +150,69 @@ function onEditInstallable(e) {
   const row = e.range.getRow();
   if (row === 1) return;
 
-  const col = e.range.getColumn();
-  if (col < 2 || col > ACTIVO_COL) return;
+  const headers = _headers(sheet);
+  if (!headers.length) return;
 
-  const rowValues = sheet.getRange(row, 1, 1, COLUMNS.length).getValues()[0];
-  const rowObj = {};
-  COLUMNS.forEach((k, i) => { rowObj[k] = rowValues[i]; });
-  const id = rowObj.id;
+  const editedCol = e.range.getColumn();
+  const editedHeader = headers[editedCol - 1];
+  // Ignorar ediciones en columnas server-managed (evita loops)
+  if (SERVER_MANAGED.has(editedHeader)) return;
+
+  const rowValues = sheet.getRange(row, 1, 1, headers.length).getValues()[0];
+  const idIdx = _indexOf(headers, 'id');
+  const nombreIdx = _indexOf(headers, 'nombre');
+  const id = idIdx >= 0 ? rowValues[idIdx] : '';
+  const nombre = nombreIdx >= 0 ? String(rowValues[nombreIdx] || '').trim() : '';
 
   try {
+    let updated;
     if (!id) {
-      if (!rowObj.nombre) return;
-      const created = _apiCall('POST', '/stakeholders', {
-        nombre: rowObj.nombre, rol: rowObj.rol, correo: rowObj.correo,
-        telefono: String(rowObj.telefono || ''), ubicacion: rowObj.ubicacion,
-        direccion: rowObj.direccion, observaciones: rowObj.observaciones,
-        servicios: rowObj.servicios, linkedin_url: rowObj.linkedin_url,
-        fuente_archivo: 'Google Sheets',
-      });
-      _writeRow(sheet, row, created);
+      if (!nombre) return;
+      const payload = _buildPayload(headers, rowValues);
+      if (!payload.fuente_archivo) payload.fuente_archivo = 'Google Sheets';
+      updated = _apiCall('POST', '/stakeholders', payload);
     } else {
-      const updates = {
-        nombre: rowObj.nombre || null,
-        rol: rowObj.rol || null,
-        correo: rowObj.correo || null,
-        telefono: rowObj.telefono ? String(rowObj.telefono) : null,
-        ubicacion: rowObj.ubicacion || null,
-        direccion: rowObj.direccion || null,
-        clasificacion_negocio: rowObj.clasificacion_negocio || null,
-        observaciones: rowObj.observaciones || null,
-        servicios: rowObj.servicios || null,
-        linkedin_url: rowObj.linkedin_url || null,
-        activo: rowObj.activo === true || String(rowObj.activo).toUpperCase() === 'TRUE',
-      };
-      const updated = _apiCall('PATCH', '/stakeholders/' + id, updates);
-      _writeRow(sheet, row, updated);
+      const payload = _buildPayload(headers, rowValues);
+      updated = _apiCall('PATCH', '/stakeholders/' + id, payload);
     }
+    _writeRow(sheet, row, headers, updated);
   } catch (err) {
-    sheet.getRange(row, FECHA_ACT_COL).setNote('Error sync: ' + err.message);
+    const fechaIdx = _indexOf(headers, 'fecha_actualizacion');
+    const noteCol = (fechaIdx >= 0 ? fechaIdx : 0) + 1;
+    sheet.getRange(row, noteCol).setNote('Error sync: ' + err.message);
   }
 }
 
-function _writeRow(sheet, row, obj) {
+function _writeRow(sheet, row, headers, obj) {
   _props().setProperty('SYNC_IN_PROGRESS', 'true');
   try {
-    const values = COLUMNS.map((k) => (obj[k] !== undefined && obj[k] !== null) ? obj[k] : '');
-    sheet.getRange(row, 1, 1, COLUMNS.length).setValues([values]);
-    sheet.getRange(row, FECHA_ACT_COL).clearNote();
+    const values = _rowFromApi(headers, obj);
+    sheet.getRange(row, 1, 1, headers.length).setValues([values]);
+    const fechaIdx = _indexOf(headers, 'fecha_actualizacion');
+    if (fechaIdx >= 0) sheet.getRange(row, fechaIdx + 1).clearNote();
   } finally {
     _props().deleteProperty('SYNC_IN_PROGRESS');
   }
+}
+
+// ----------------------------------------------------------------------------
+//  Trigger onChange: protege contra borrado manual de filas
+//  (click-derecho → Eliminar fila NO dispara onEdit; usamos onChange)
+// ----------------------------------------------------------------------------
+function onChangeInstallable(e) {
+  if (_props().getProperty('SYNC_IN_PROGRESS') === 'true') return;
+  if (!e || e.changeType !== 'REMOVE_ROW') return;
+
+  refreshFromPostgres();
+  try {
+    SpreadsheetApp.getUi().alert(
+      'Protección de datos',
+      'Detecté eliminación manual de fila(s). Restauré desde Postgres.\n\n' +
+      'Para eliminar de verdad: menú "La Falla DF → Eliminar fila seleccionada".\n' +
+      'Para dejar de contactar: menú "La Falla DF → Desactivar fila seleccionada".',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (_) { /* sin UI en ejecuciones de cron */ }
 }
 
 // ----------------------------------------------------------------------------
@@ -144,14 +221,32 @@ function _writeRow(sheet, row, obj) {
 function refreshFromPostgres() {
   _props().setProperty('SYNC_IN_PROGRESS', 'true');
   try {
-    const rows = _apiCall('GET', '/stakeholders?incluir_inactivos=true&limit=500');
+    const rows = _apiCall('GET', '/stakeholders?incluir_inactivos=true&limit=10000');
     const sheet = _sheet();
-    const lastRow = sheet.getLastRow();
-    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, COLUMNS.length).clearContent();
-    if (!rows.length) return;
+    const headers = _headers(sheet);
+    if (!headers.length) return;
 
-    const data = rows.map((r) => COLUMNS.map((k) => (r[k] !== undefined && r[k] !== null) ? r[k] : ''));
-    sheet.getRange(2, 1, data.length, COLUMNS.length).setValues(data);
+    const lastRow = sheet.getLastRow();
+
+    // Preservar filas pendientes: sin id pero con nombre (POST en curso o falló)
+    const pending = [];
+    if (lastRow > 1) {
+      const existing = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+      const idIdx = _indexOf(headers, 'id');
+      const nombreIdx = _indexOf(headers, 'nombre');
+      existing.forEach((r) => {
+        const hasId = idIdx >= 0 && r[idIdx] !== '' && r[idIdx] !== null && r[idIdx] !== undefined;
+        const hasNombre = nombreIdx >= 0 && String(r[nombreIdx] || '').trim() !== '';
+        if (!hasId && hasNombre) pending.push(r);
+      });
+      sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+    }
+
+    const fromDb = rows.map((r) => _rowFromApi(headers, r));
+    const all = fromDb.concat(pending);
+    if (!all.length) return;
+
+    sheet.getRange(2, 1, all.length, headers.length).setValues(all);
   } finally {
     _props().deleteProperty('SYNC_IN_PROGRESS');
   }
@@ -165,14 +260,21 @@ function deleteSelectedRow() {
   const row = sheet.getActiveRange().getRow();
   if (row === 1) { SpreadsheetApp.getUi().alert('Selecciona una fila de datos.'); return; }
 
-  const id = sheet.getRange(row, ID_COL).getValue();
-  const nombre = sheet.getRange(row, 2).getValue();
+  const headers = _headers(sheet);
+  const idIdx = _indexOf(headers, 'id');
+  const nombreIdx = _indexOf(headers, 'nombre');
+  if (idIdx < 0) { SpreadsheetApp.getUi().alert('No encuentro la columna "id".'); return; }
+
+  const id = sheet.getRange(row, idIdx + 1).getValue();
+  const nombre = nombreIdx >= 0 ? sheet.getRange(row, nombreIdx + 1).getValue() : '';
   if (!id) { sheet.deleteRow(row); return; }
 
   const ui = SpreadsheetApp.getUi();
   const resp = ui.alert(
     'Eliminación permanente',
-    `¿Eliminar DEFINITIVAMENTE a "${nombre}" (id=${id}) de Postgres?\n\nEsta acción NO se puede deshacer. Si solo quieres dejar de contactarlo, usa "Desactivar" en su lugar.`,
+    `¿Eliminar DEFINITIVAMENTE a "${nombre}" (id=${id}) de Postgres?\n\n` +
+    `Esta acción NO se puede deshacer. Si solo quieres dejar de contactarlo, ` +
+    `usa "Desactivar" en su lugar.`,
     ui.ButtonSet.YES_NO
   );
   if (resp !== ui.Button.YES) return;
@@ -185,20 +287,26 @@ function deactivateSelectedRow() {
   const sheet = _sheet();
   const row = sheet.getActiveRange().getRow();
   if (row === 1) return;
-  const id = sheet.getRange(row, ID_COL).getValue();
+  const headers = _headers(sheet);
+  const idIdx = _indexOf(headers, 'id');
+  if (idIdx < 0) return;
+  const id = sheet.getRange(row, idIdx + 1).getValue();
   if (!id) return;
   const updated = _apiCall('POST', '/stakeholders/' + id + '/deactivate');
-  _writeRow(sheet, row, updated);
+  _writeRow(sheet, row, headers, updated);
 }
 
 function activateSelectedRow() {
   const sheet = _sheet();
   const row = sheet.getActiveRange().getRow();
   if (row === 1) return;
-  const id = sheet.getRange(row, ID_COL).getValue();
+  const headers = _headers(sheet);
+  const idIdx = _indexOf(headers, 'id');
+  if (idIdx < 0) return;
+  const id = sheet.getRange(row, idIdx + 1).getValue();
   if (!id) return;
   const updated = _apiCall('POST', '/stakeholders/' + id + '/activate');
-  _writeRow(sheet, row, updated);
+  _writeRow(sheet, row, headers, updated);
 }
 
 // ----------------------------------------------------------------------------
@@ -208,7 +316,7 @@ function setupTriggers() {
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach((t) => {
     const fn = t.getHandlerFunction();
-    if (fn === 'onEditInstallable' || fn === 'refreshFromPostgres') {
+    if (fn === 'onEditInstallable' || fn === 'onChangeInstallable' || fn === 'refreshFromPostgres') {
       ScriptApp.deleteTrigger(t);
     }
   });
@@ -218,10 +326,15 @@ function setupTriggers() {
     .onEdit()
     .create();
 
+  ScriptApp.newTrigger('onChangeInstallable')
+    .forSpreadsheet(SpreadsheetApp.getActive())
+    .onChange()
+    .create();
+
   ScriptApp.newTrigger('refreshFromPostgres')
     .timeBased()
     .everyMinutes(5)
     .create();
 
-  SpreadsheetApp.getUi().alert('Triggers creados: onEditInstallable + refreshFromPostgres cada 5 min.');
+  SpreadsheetApp.getUi().alert('Triggers creados: onEdit + onChange (protección) + refresh cada 5 min.');
 }
