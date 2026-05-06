@@ -179,3 +179,50 @@ class AlertItem(BaseModel):
     responsable: Optional[str] = None
     tarea_id: Optional[int] = None
     stakeholder_id: Optional[int] = None
+    
+# ─── EDT Nodes ───────────────────────────────────────────────────────────────
+
+class EdtNodeBase(BaseModel):
+    codigo: str
+    nivel: int = 1
+    nombre: str
+    descripcion_dict: Optional[str] = None
+    responsable: Optional[str] = None
+    accountable: Optional[str] = None
+    consulted: Optional[List[str]] = None
+    informed: Optional[List[str]] = None
+    predecesores: Optional[List[str]] = None
+    costo_estimado: float = 0.0
+    duracion_dias: int = 0
+    porcentaje_avance: int = 0
+    es_paquete_trabajo: bool = True
+    es_hito: bool = False
+    estado: str = "planificado"
+    alerta: Optional[str] = None
+
+class EdtNodeCreate(EdtNodeBase):
+    parent_id: Optional[int] = None
+
+class EdtNodePatch(BaseModel):
+    codigo: Optional[str] = None
+    nombre: Optional[str] = None
+    descripcion_dict: Optional[str] = None
+    responsable: Optional[str] = None
+    accountable: Optional[str] = None
+    consulted: Optional[List[str]] = None
+    informed: Optional[List[str]] = None
+    predecesores: Optional[List[str]] = None
+    costo_estimado: Optional[float] = None
+    duracion_dias: Optional[int] = None
+    porcentaje_avance: Optional[int] = None
+    estado: Optional[str] = None
+    alerta: Optional[str] = None
+
+class EdtNodeOut(EdtNodeBase):
+    id: int
+    project_id: int
+    parent_id: Optional[int] = None
+    # Valores calculados
+    costo_hijos_sum: Optional[float] = None
+    num_hijos: Optional[int] = None
+    model_config = {"from_attributes": True}
