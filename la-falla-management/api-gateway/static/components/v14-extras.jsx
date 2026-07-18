@@ -266,7 +266,14 @@ function StakeholderModal({ open, onClose, onSave, editData }){
             </div>
             <div className="stk-field">
               <label>LinkedIn</label>
-              <input type="url" value={form.linkedin} onChange={e=>update('linkedin',e.target.value)} placeholder="linkedin.com/in/..."/>
+              <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                <input type="url" value={form.linkedin} onChange={e=>update('linkedin',e.target.value)} placeholder="linkedin.com/in/..." style={{flex:1}}/>
+                {form.linkedin.trim() && (
+                  <a href={form.linkedin.startsWith('http')?form.linkedin:`https://${form.linkedin}`}
+                     target="_blank" rel="noopener noreferrer"
+                     className="stk-li-open" title="Abrir perfil en LinkedIn">↗</a>
+                )}
+              </div>
             </div>
           </div>
           <div className="stk-row2">
@@ -307,6 +314,7 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
   const [page, setPage] = useSt(0);
   const [editNote, setEditNote] = useSt(null);
   const [editText, setEditText] = useSt('');
+  const [stkView, setStkView] = useSt(null);
   const PER_PAGE = 10;
 
   if(!open) return null;
@@ -343,6 +351,11 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
 
   return (
     <>
+      <StakeholderViewModal
+        contact={stkView}
+        onClose={()=>setStkView(null)}
+        onEdit={c=>{ setStkView(null); onClose(); onEditStakeholder(c); }}
+      />
       <div className="sb-scrim" onClick={onClose}/>
       <nav className="sb-drawer">
         <div className="sb-hd">
@@ -411,6 +424,7 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
                     </div>
                   </div>
                   <div className="sb-item-acts">
+                    <button className="sb-act-btn" onClick={()=>setStkView(c)} title="Ver perfil">◉</button>
                     <button className="sb-act-btn" onClick={()=>{ onClose(); onEditStakeholder(c); }} title="Editar">✎</button>
                     <button className="sb-act-btn sb-act-del" onClick={()=>deleteContact(c.id)} title="Eliminar">×</button>
                   </div>
@@ -433,6 +447,74 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
         </div>
       </nav>
     </>
+  );
+}
+
+/* ============================================================
+   STAKEHOLDER VIEW — modal de solo lectura
+   ============================================================ */
+function StakeholderViewModal({ contact, onClose, onEdit }){
+  if(!contact) return null;
+  const initials = (contact.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2) || '—';
+  const li = contact.linkedin
+    ? (contact.linkedin.startsWith('http') ? contact.linkedin : `https://${contact.linkedin}`)
+    : null;
+  return (
+    <div className="cap-scrim" onClick={onClose}>
+      <div className="stk-box" onClick={e=>e.stopPropagation()}>
+        <div className="cap-hd">
+          <span className="cap-eye">👤 PERFIL</span>
+          <button className="cap-close" onClick={onClose}>×</button>
+        </div>
+        <div className="stk-view-hero">
+          <div className="stk-view-av">{initials}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div className="stk-view-name">{contact.name||'—'}</div>
+            {contact.rol && <div className="stk-view-rol">{contact.rol}</div>}
+            <div className="stk-view-badge">{contact.type||'Sin clasificar'}</div>
+          </div>
+          {li && (
+            <a href={li} target="_blank" rel="noopener noreferrer" className="stk-li-open stk-li-hero" title="Abrir LinkedIn">↗</a>
+          )}
+        </div>
+        <div className="stk-view-grid">
+          {contact.phone && (
+            <div className="stk-view-item">
+              <div className="stk-view-label">Teléfono</div>
+              <a href={`tel:${contact.phone.replace(/\s/g,'')}`} className="stk-view-val stk-view-link">{contact.phone}</a>
+            </div>
+          )}
+          {contact.email && (
+            <div className="stk-view-item">
+              <div className="stk-view-label">Correo</div>
+              <a href={`mailto:${contact.email}`} className="stk-view-val stk-view-link">{contact.email}</a>
+            </div>
+          )}
+          {contact.ubicacion && (
+            <div className="stk-view-item">
+              <div className="stk-view-label">Ubicación</div>
+              <div className="stk-view-val">{contact.ubicacion}</div>
+            </div>
+          )}
+          {li && (
+            <div className="stk-view-item">
+              <div className="stk-view-label">LinkedIn</div>
+              <a href={li} target="_blank" rel="noopener noreferrer" className="stk-view-val stk-view-link">Ver perfil en LinkedIn →</a>
+            </div>
+          )}
+          {contact.observaciones && (
+            <div className="stk-view-item stk-view-full">
+              <div className="stk-view-label">Observaciones</div>
+              <div className="stk-view-val stk-view-obs">{contact.observaciones}</div>
+            </div>
+          )}
+        </div>
+        <div className="stk-foot">
+          <button className="stk-cancel" onClick={onClose}>Cerrar</button>
+          {onEdit && <button className="stk-save" onClick={()=>{ onClose(); onEdit(contact); }}>Editar</button>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2020,6 +2102,6 @@ function ProjectsDashboard({ open, onClose }){
 
 /* Export to window */
 Object.assign(window, {
-  FAB, CapturaModal, StakeholderModal, Sidebar, ProjectsDashboard, NewProjectModal, EdtWizard,
+  FAB, CapturaModal, StakeholderModal, StakeholderViewModal, Sidebar, ProjectsDashboard, NewProjectModal, EdtWizard,
   INBOX_ITEMS, CONTACTS_DATA, PROJECTS_DATA,
 });

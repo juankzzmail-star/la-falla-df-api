@@ -3121,6 +3121,46 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
 .sb-act-del:hover{border-color:var(--crit); color:var(--crit)}
 .sb-contact{position:relative}
 
+/* LinkedIn open button (used in edit modal and view modal) */
+.stk-li-open{
+  width:32px; height:32px; border-radius:7px; flex-shrink:0;
+  border:1px solid #2a2a2a; color:#9a9a94; background:transparent;
+  display:grid; place-items:center; font-size:15px; text-decoration:none;
+  transition:all .15s; cursor:pointer;
+}
+.stk-li-open:hover{border-color:var(--falla); color:var(--falla); background:rgba(0,255,65,.06)}
+.stk-li-hero{width:36px; height:36px; font-size:16px}
+
+/* Stakeholder view-only modal */
+.stk-view-hero{
+  display:flex; align-items:center; gap:14px;
+  padding:14px 0 18px; border-bottom:1px solid #1e1e1e; margin-bottom:14px;
+}
+.stk-view-av{
+  width:52px; height:52px; border-radius:50%; flex-shrink:0;
+  background:#1a1a1a; border:2px solid var(--falla);
+  display:grid; place-items:center;
+  font-family:var(--f-title); font-size:18px; font-weight:700; color:var(--falla);
+  letter-spacing:.05em;
+}
+.stk-view-name{font-family:var(--f-title); font-size:15px; font-weight:700; color:#f4f4f0; letter-spacing:.03em}
+.stk-view-rol{font-size:11px; color:var(--mute); margin-top:2px}
+.stk-view-badge{
+  display:inline-block; margin-top:5px;
+  padding:2px 8px; border-radius:20px; font-size:9px; font-weight:700; letter-spacing:.08em;
+  background:#1a2a1a; border:1px solid #2a3a2a; color:var(--falla); font-family:var(--f-title);
+}
+.stk-view-grid{
+  display:grid; grid-template-columns:1fr 1fr; gap:10px 16px; margin-bottom:4px;
+}
+.stk-view-item{display:flex; flex-direction:column; gap:3px}
+.stk-view-full{grid-column:1/-1}
+.stk-view-label{font-size:9px; font-weight:700; letter-spacing:.08em; color:var(--mute); font-family:var(--f-title); text-transform:uppercase}
+.stk-view-val{font-size:12px; color:#d4d4d0; word-break:break-word}
+.stk-view-link{color:var(--falla); text-decoration:none; transition:opacity .15s}
+.stk-view-link:hover{opacity:.8; text-decoration:underline}
+.stk-view-obs{white-space:pre-line; line-height:1.5; color:#a0a09c; font-size:11px}
+
 /* Edit inline for bandeja notes */
 .sb-edit-input{
   display:block; width:100%;
