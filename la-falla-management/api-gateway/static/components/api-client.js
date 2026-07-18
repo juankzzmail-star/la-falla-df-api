@@ -117,6 +117,24 @@
       var abbr = isNaN(d.getTime()) ? '?' : MONTH_3[d.getMonth()];
       return [abbr, +((s.caja_operativa || 0) / 1000000).toFixed(1)];
     });
+    // When fewer than 2 real snapshots exist, generate a 12-month forward runway projection so
+    // CajaViz has enough points to render. The projection burns caja_operativa at gasto_mensual_promedio
+    // per month — it shows the CEO visually when cash hits zero at the current burn rate.
+    if (months.length < 2 && raw.latest && (raw.latest.gasto_mensual_promedio || 0) > 0) {
+      var _cajaM  = +((raw.latest.caja_operativa || 0) / 1000000).toFixed(1);
+      var _gastoM = +((raw.latest.gasto_mensual_promedio || 0) / 1000000).toFixed(1);
+      var _baseSnap = snaps.length > 0 ? snaps[snaps.length - 1] : null;
+      var _baseDate = _baseSnap && _baseSnap.fecha
+        ? new Date(_baseSnap.fecha.length === 10 ? _baseSnap.fecha + 'T00:00:00' : _baseSnap.fecha)
+        : new Date();
+      months = [];
+      for (var _i = 0; _i < 12; _i++) {
+        var _d2 = new Date(_baseDate.getFullYear(), _baseDate.getMonth() + _i, 1);
+        var _v = Math.max(0, +(_cajaM - _gastoM * _i).toFixed(1));
+        months.push([MONTH_3[_d2.getMonth()], _v]);
+        if (_v === 0) break;
+      }
+    }
     // detalle real por mes para el tooltip (composición + Δ caja mes a mes). NO se re-inventan
     // ingresos/egresos (se borraron a propósito por ser ficción); solo datos derivados reales.
     var monthsDetail = snaps.map(function(s, i) {
