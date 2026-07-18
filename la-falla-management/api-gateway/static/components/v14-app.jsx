@@ -134,15 +134,6 @@ function SubHeader({ period, setPeriod, onRoadmap, onVision }){
    KPIs — 3 gráficos principales (clickables, abren detalle)
    ============================================================ */
 
-// ---- PULSO: heatmap de áreas × días ----
-// Valores: 4=Óptimo (feedback>4.5, 0h extra) | 3=Estable (≤40h) | 2=Fricción (sobrecosto/caída) | 1=Crítico (>50h o <10% libres)
-const PULSO_ROWS = [
-  { area:'DC · Comercial',   values:[3,3,4,4,3,3,4], score:78 },
-  { area:'DP · Proyectos',   values:[3,2,2,1,1,2,2], score:64 },  // Rutas Cafeteras 02: presión escalando
-  { area:'DI · Investig.',   values:[4,4,4,3,4,4,3], score:82 },
-  { area:'DA · Audiovisual', values:[3,3,2,2,2,1,3], score:66 },  // Piloto día 3/5: intensidad alta
-];
-const DAYS = ['L','M','X','J','V','S','D'];
 
 function PulsoViz({ compact=false, rows }){
   // honest: barra de carga por dirección (deriva del backlog real de tareas). Sin encabezado de días —
@@ -165,13 +156,6 @@ function PulsoViz({ compact=false, rows }){
   );
 }
 
-// ---- HACIA 2030: radial gauge de arcos concéntricos ----
-const VISION_ARCS = [
-  { label:'RIESGO',      value:22, color:'#E8A02C' },
-  { label:'ENTREGAS',    value:78, color:'var(--falla)' },
-  { label:'CAPTACIÓN',   value:65, color:'var(--falla)' },
-  { label:'EJE ESTRAT.', value:58, color:'var(--ink)'   },
-];
 function RadialViz({ size=180, arcs }){
   // honest: sin arcos reales no se pinta el gauge de ejemplo.
   const data = arcs && arcs.length ? arcs : [];
@@ -217,11 +201,6 @@ function RadialViz({ size=180, arcs }){
   );
 }
 
-// ---- AIRE: barras verticales de tendencia (caja 12 meses) ----
-const CAJA_MONTHS = [
-  ['M',6.4],['J',6.1],['J',5.8],['A',6.2],['S',6.9],['O',7.4],
-  ['N',7.8],['D',8.1],['E',8.4],['F',8.7],['M',9.0],['A',9.2],
-];
 function CajaViz({ compact=false, months }){
   // honest: sin meses reales (>=2) no se pinta la tendencia de ejemplo.
   const data = months && months.length >= 2 ? months : [];
@@ -533,91 +512,7 @@ function Lectura(){
 // change unify-strategy-execution: SEGS_FALLBACK (16 fabricated milestones) removed. The grid now
 // reads real roadmap_milestones; when empty it shows an honest "sin datos" state + DEMO badge.
 
-const SEG_DETAIL = {
-  'Identidad de marca': {
-    cuando:'Q1 2024', descripcion:'Logo, paleta visual, voz de marca y manual de identidad. Base de toda la comunicación de La Falla.',
-    logros:['Sistema de identidad visual completo: logo, paleta, tipografía y tono','Manual de marca entregado a todas las áreas y aliados','Voz de marca definida y aplicada en todas las comunicaciones','Reconocimiento de marca validado por MinCultura y ACMI'],
-    leccion:'El proceso tomó 3 meses de iteración — involucrar al equipo completo desde la primera sesión redujo el retrabajo a cero.',
-  },
-  'Plataforma digital': {
-    cuando:'Q2 2024', descripcion:'Sitio web lafalla.co, perfiles de redes sociales y presencia digital unificada.',
-    logros:['lafalla.co publicado y operativo con analíticas (GA4)','Presencia unificada en Instagram, LinkedIn y YouTube','Centro de Mando desplegado en VPS propio (este dashboard)','Infraestructura digital autónoma: no dependemos de terceros para operar'],
-    leccion:'Optar por VPS self-hosted desde el inicio nos dio flexibilidad total para el Centro de Mando. En SaaS esto habría costado 3× y sin control.',
-  },
-  'Red de aliados 1': {
-    cuando:'Q3 2024', descripcion:'Acuerdos con FDC, MinCultura y ACMI. Red inicial de alianzas estratégicas.',
-    logros:['Acuerdo marco con FDC firmado y activo','Carta de intención con MinCultura (en renovación jun 2026)','Primer contacto formal con ACMI — derivó en la Cumbre 2026','8 aliados activos en el directorio de stakeholders'],
-    leccion:'La relación con ACMI empezó como una exploración de contacto — convertirla en la Cumbre 2026 fue el mayor salto estratégico de este hito.',
-  },
-  'Piloto Eje': {
-    cuando:'Q4 2024', descripcion:'Primer piloto audiovisual en el Eje Cafetero. Validación del modelo de producción territorial.',
-    logros:['Piloto «Eje» completado: 5 días de rodaje, material editado','Modelo de producción territorial validado y documentado','Relaciones con comunidades del Eje establecidas para proyectos futuros','Material de muestra que abrió convocatorias 2025 con FDC'],
-    leccion:'El piloto mostró que los rodajes en territorio rural necesitan el doble de tiempo logístico. Eso cambió cómo planificamos Rutas Cafeteras.',
-  },
-  'Alianzas ministerio': {
-    cuando:'Q1 2025', descripcion:'Convenio firmado con MinCultura y RTVC. Respaldo institucional para expansión.',
-    logros:['Convenio marco con MinCultura activo','Relación con RTVC establecida para distribución de contenido','Acceso a convocatorias cerradas de financiamiento público','Credencial institucional que abre puertas a cooperación internacional'],
-    leccion:'El proceso de firma tomó 5 meses. Para la renovación en junio iniciamos gestión con 4 meses de anticipación — nunca más esperar el último mes.',
-  },
-  'Modelo financiero': {
-    cuando:'Q1 2025', descripcion:'Plan financiero 2025-2030 validado por directivos. Proyecciones y fuentes de ingreso definidas.',
-    logros:['Proyecciones 2025-2030 validadas y usadas como referencia en convocatorias','Mix de ingresos definido: 60% institucional · 30% comercial · 10% fondos','Política de reservas estratégicas aprobada y respetada','9+ meses de respiración mantenidos consistentemente'],
-    leccion:'Separar reservas estratégicas de caja operativa fue la mejor decisión financiera — nos protegió durante el trimestre de menor captación sin tocar el plan.',
-  },
-  'Equipo base': {
-    cuando:'Q2 2025', descripcion:'4 directoras + 2 externos clave contratados. Estructura organizacional operativa.',
-    logros:['4 gerencias activas: Comercial, Proyectos, Investigación, Audiovisual','Juan Carlos (Dir. Comercial y Financiera) lleva el control de caja con seguimiento semanal en Google Sheets','Manuales de funciones por cargo elaborados y distribuidos','Estructura lista para escalar a 8+ personas en 2027'],
-    leccion:'Definir los manuales de funciones antes de contratar fue clave — redujo ambigüedades y conflictos de rol en los primeros 6 meses.',
-  },
-  'Gobierno de datos': {
-    cuando:'Q3 2025', descripcion:'PostgreSQL + n8n + OpenClaw/Gentil activos. Infraestructura de datos consolidada.',
-    logros:['PostgreSQL con 18 tablas operativas y 554 contactos en stakeholders_master','n8n con 5 workflows activos (GM-01 a GM-04)','Gentil/OpenClaw conectado a todos los endpoints del Centro de Mando vía MCP','Este dashboard: datos en vivo, sin actualizaciones manuales'],
-    leccion:'Unificar todo en un solo VPS con EasyPanel redujo el overhead operativo. Self-hosted vs SaaS nos ahorra ~$200/mes y nos da trazabilidad total.',
-  },
-  'Narrativa pública': {
-    cuando:'Q1 2026', descripcion:'Marca posicionada en medios especializados y redes. Narrativa coherente con la visión 2030.',
-    logros:['Posicionamiento como agencia de investigación audiovisual territorial','184K de alcance en 30 días (GA, datos en vivo)','Narrativa «investigación que se convierte en historia» validada por aliados','Presencia en Eje, Risaralda y exploración del Caribe'],
-    leccion:'La narrativa que resonó fue más potente que «productora audiovisual» — el componente de investigación diferencia a La Falla de la competencia.',
-  },
-  'Cumbre ACMI (en curso)': {
-    cuando:'Jun 2026', descripcion:'Evento audiovisual nacional posicionado para 2026. Guion en revisión, producción al 34% presupuestado. Hito crítico para el posicionamiento.',
-    hecho:['Programa del evento confirmado y publicado','12 de 15 invitados nacionales confirmados','Propuesta enviada a invitados internacionales (gestión activa)','22M COP ejecutados sobre 65M presupuestados (34%)'],
-    faltante:['Confirmación de al menos 2 invitados internacionales','Producción integral del evento: logística + audiovisual','Cobertura en vivo y post-producción del registro del evento','Cierre contractual con 3 proveedores pendientes de firma'],
-    proximo_paso:'Confirmar mínimo 2 invitados internacionales antes del 15 de mayo — sin esto el programa no puede publicarse completo y la credibilidad del evento se ve afectada.',
-  },
-  'Laboratorio Risaralda': {
-    cuando:'Jul 2026', descripcion:'Laboratorio permanente de investigación territorial en Risaralda. Retrasado 6 días — requiere intervención del Gerente General esta semana.',
-    problemas:['Talleres comunitarios al 67%: 4 de 6 completados — retrasos logísticos en campo','Documento de síntesis sin iniciar: esperando cierre de talleres para arrancar','6 días de retraso acumulado sobre cronograma original','Bloquea parcialmente el material de referencia para la Cumbre ACMI'],
-    mejora:'Debimos haber bloqueado las fechas de campo con 8 semanas de anticipación, no 3. La logística rural no perdona la planeación tardía — este es un patrón que no puede repetirse en Caribe.',
-    plan_recuperacion:['Agendar talleres 5 y 6 para la semana del 12-16 de mayo (no negociable, cerrar hoy)','Iniciar síntesis parcial con los 4 talleres ya completados, no esperar al cierre','Reunión 1:1 con líder de proyectos antes del jueves de esta semana','Evaluar si el material parcial es suficiente para presentar avance en Cumbre ACMI'],
-  },
-  'Memoria 2025': {
-    cuando:'May 2026', descripcion:'Publicación anual de procesos e impacto de La Falla. Retrasada 2 semanas — el contenido existe en GI, falta el proceso editorial.',
-    problemas:['2 semanas de retraso sobre la fecha de publicación planificada','Síntesis editorial sin iniciar: equipo GI concentrado en trabajo de campo','Riesgo de que la Memoria no esté lista como material de posicionamiento para la Cumbre ACMI'],
-    mejora:'La Memoria debió arrancar en paralelo con el trabajo de campo, no después de cerrarlo. El contenido de los 23 documentos de GI ya existe — era solo cuestión de asignar el recurso editorial a tiempo.',
-    plan_recuperacion:['Solicitar a Gentil que genere un primer borrador desde los 23 documentos activos de GI (hoy mismo)','Asignar 1 persona de GI exclusivamente a edición por 5 días esta semana','Publicar versión digital antes del 20 de mayo (meta dura)','Tener versión impresa lista para la Cumbre ACMI en junio como material de sala'],
-  },
-  'Red de aliados 2': {
-    cuando:'Q3 2026', descripcion:'Segunda red de alianzas: fondos privados, cooperación internacional y circuitos regionales. Pendiente de arranque.',
-    requisitos:['Cumbre ACMI completada — genera contactos internacionales y credencial de convocatoria','Laboratorio Risaralda finalizado — valida la metodología territorial que se va a replicar','Memoria 2025 publicada — respaldo institucional ante nuevos aliados','Captación Q2 (620M) alcanzada — demuestra viabilidad financiera a aliados privados'],
-    pasos:['Mapear fondos privados y cooperación internacional elegibles (post-Cumbre, agosto)','Diseñar propuesta de valor diferenciada por tipo de aliado: fondos, academia, sector privado','Lanzar campaña de alianzas en agosto-septiembre 2026 con Memoria como soporte','Cerrar 3 acuerdos formales antes de diciembre 2026'],
-  },
-  'Circuito Audiovisual': {
-    cuando:'Q1 2027', descripcion:'Circuito propio de festivales y distribución de contenido audiovisual de La Falla. Pendiente.',
-    requisitos:['Cumbre ACMI posicionada como referente — es la credencial del circuito','Laboratorio Risaralda activo generando contenido territorial de alta calidad','Al menos 5 piezas audiovisuales terminadas y listas para circular','Alianza con distribuidor nacional o plataforma de streaming para llegar al público'],
-    pasos:['Definir curatoría: qué tipo de contenido circula y con qué criterio editorial','Mapear festivales nacionales e internacionales elegibles para el primer año','Diseñar el modelo económico del circuito (cobro por proyección / co-producción / patrocinio)','Lanzar primera edición en Q1 2027 con al menos 4 ciudades ancla'],
-  },
-  'Territorio Caribe': {
-    cuando:'Q2 2027', descripcion:'Expansión territorial al norte del país: Barranquilla, Cartagena y Santa Marta. Exploración activa desde GI.',
-    requisitos:['Red de aliados 2 activa con al menos 1 contacto ancla en la región','Metodología territorial validada y documentada desde Risaralda','Circuito audiovisual con presencia confirmada en el Caribe','Financiamiento asegurado para operación de 3 meses en nuevo territorio'],
-    pasos:['Completar la exploración de GI: convertir contactos abiertos en aliados formales','Identificar aliado ancla en la región: academia, institución cultural o colectivo local','Diseñar plan de entrada: piloto de 3 meses en una ciudad antes de escalar','Lanzar presencia en 3 ciudades del Caribe en Q3 2027 con equipo local coordinado'],
-  },
-  'Escalado nacional': {
-    cuando:'2028-2030', descripcion:'Presencia consolidada en 5+ ciudades colombianas. Objetivo final de la visión 2030.',
-    requisitos:['Territorio Caribe operativo con al menos 1 producción completada','Circuito audiovisual con 2 ediciones anuales exitosas','Modelo financiero diversificado y autosostenible sin depender de una sola fuente','Equipo de 12+ personas con liderazgos regionales autónomos'],
-    pasos:['Seleccionar las 5 ciudades ancla basadas en los datos acumulados de GI','Estructurar alianzas regionales en cada ciudad: academia + sector público + privado','Contratar coordinadores territoriales con raíz cultural en cada región','Posicionar a La Falla D.F. como el referente nacional de investigación audiovisual','Alcanzar autosostenibilidad en todas las sedes para cierre de 2030'],
-  },
-};
+const SEG_DETAIL = {};
 const SEG_STATE = { done:'✓ Completo', prog:'◐ En curso', late:'⚠ Retrasado', '':'○ Pendiente' };
 const SEG_COLOR = { done:'#00FF41', prog:'var(--ink-3)', late:'#e89c2b', '':'var(--mute)' };
 
@@ -771,33 +666,6 @@ function Execution(){
   );
 }
 
-const PINS_FALLBACK = [
-  { x:3, y:3, c:'high', t:'Rutas Cafeteras 02 · sobrecosto',
-    gentil_analysis:'El sobrecosto de +7% en Rutas Cafeteras 02 posiciona este riesgo en Nr=16 (nivel máximo). El gasto ya está ocurriendo durante el rodaje activo del episodio 2 — el margen de corrección es mínimo. Si el patrón continúa, el proyecto proyecta un déficit de ~12M COP al cierre, impactando directamente la liquidez de Q3. No es una amenaza futura: es un hecho en curso que requiere intervención esta semana.',
-    origen:'openclaw_auto', detectado_por:'Gentil · cruce sobrecosto ejecutado vs. presupuesto aprobado', fecha_deteccion:'2026-05-02',
-    plan_mitigacion:['Auditoría de gastos con director de proyectos esta semana','Revisar contratos de post-producción — explorar renegociación o reducción de scope','Evaluar si el episodio 2 puede absorber el diferencial reduciendo días de rodaje','Activar reserva estratégica si el déficit supera 15M COP'],
-    estado_mitigacion:'en_mitigacion' },
-  { x:2, y:2, c:'med', t:'MinCultura · silencio 24d',
-    gentil_analysis:'La ausencia de respuesta de MinCultura durante 24 días es un riesgo moderado (Nr=9). La renovación del convenio está programada para junio 15 — si no hay contacto en los próximos 7 días, el proceso administrativo no tendrá tiempo suficiente para firmar antes de esa fecha. El impacto es alto en acceso a convocatorias cerradas y en la credibilidad institucional ante aliados internacionales. La probabilidad es media: el silencio puede ser burocrático, no negativo.',
-    origen:'openclaw_auto', detectado_por:'Gentil · monitoreo de SLA de comunicaciones institucionales', fecha_deteccion:'2026-04-28',
-    plan_mitigacion:['Llamada directa al enlace de MinCultura esta semana — no email, no formulario','Enviar resumen de logros 2025 como recordatorio de valor de la alianza','Si no hay respuesta en 5 días, escalar al director de área del ministerio'],
-    estado_mitigacion:'monitoreado' },
-  { x:1, y:3, c:'med', t:'Rotación equipo AV',
-    gentil_analysis:'La rotación en el equipo audiovisual es un riesgo de impacto alto pero probabilidad baja (Nr=8). El director audiovisual coordina 3 proyectos simultáneos: Rutas Cafeteras, Piloto Eje y Reel Abril, con un solo colaborador externo de apoyo. Si ocurre una salida inesperada, la cobertura audiovisual de la Cumbre ACMI quedaría sin responsable. El riesgo es estructural, no de persona — la carga es la amenaza.',
-    origen:'ceo_manual', detectado_por:'Gerente General · evaluación de carga operativa del área', fecha_deteccion:'2026-04-30',
-    plan_mitigacion:['Mapear 1 colaborador audiovisual adicional como respaldo para la Cumbre ACMI','Documentar los flujos de trabajo del área AV para que no dependan de una sola persona','Conversación 1:1 con director audiovisual sobre su carga y nivel de satisfacción'],
-    estado_mitigacion:'monitoreado' },
-  { x:1, y:1, c:'low', t:'Ajuste cronograma lab.',
-    gentil_analysis:'El ajuste en el cronograma del laboratorio es un riesgo bajo como evento aislado (Nr=4), dado que ya hay un plan de recuperación activo. La preocupación real es si este retraso se acumula con el de Memoria 2025 — en ese escenario el impacto sube. Por ahora lo clasifico como bajo porque el equipo tiene pasos concretos y la ventana de corrección es suficiente si se actúa esta semana.',
-    origen:'openclaw_auto', detectado_por:'Gentil · detección de tareas vencidas en GP · Laboratorio Risaralda', fecha_deteccion:'2026-05-01',
-    plan_mitigacion:['Confirmar agenda de talleres 5 y 6 antes del lunes','Si no hay agenda confirmada en 48h, escalar este riesgo a nivel medio'],
-    estado_mitigacion:'monitoreado' },
-  { x:3, y:1, c:'low', t:'Memoria 2025 · tiempos',
-    gentil_analysis:'El retraso de la Memoria 2025 tiene impacto bajo como riesgo individual (Nr=4), pero actúa como multiplicador: si la Memoria no está lista antes de la Cumbre ACMI, se pierde un material clave de posicionamiento institucional. La probabilidad de impacto es alta porque el retraso ya existe — la coloco en bajo porque Gentil puede generar el primer borrador en minutos desde los 23 documentos activos de GI, reduciendo el riesgo operativo a cero si se actúa hoy.',
-    origen:'openclaw_auto', detectado_por:'Gentil · cruce de fecha planificada vs. progreso real en GI', fecha_deteccion:'2026-05-03',
-    plan_mitigacion:['Solicitar a Gentil borrador de Memoria desde documentos GI (hoy, sin esperar)','Asignar editor de GI por 5 días exclusivos para el cierre editorial','Publicar versión digital antes del 20 de mayo'],
-    estado_mitigacion:'monitoreado' },
-];
 
 function RiskModal({ pin, onClose }){
   const [ceoNota, setCeoNota] = useState('');
