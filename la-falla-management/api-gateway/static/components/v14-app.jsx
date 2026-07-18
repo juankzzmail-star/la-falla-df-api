@@ -3933,13 +3933,18 @@ function App() {
   },[]);
 
   useEffect(()=>{
-    (window.__CM_KEY_READY__ || Promise.resolve(window.__API_KEY__||'')).then(k=>{
-      const b = (window.__API_BASE__ || '/api').replace(/\/$/, '');
-      fetch(`${b}/stakeholders?limit=500`, k ? {headers:{'X-API-Key':k}} : {})
-        .then(r => r.ok ? r.json() : [])
-        .then(list => setContacts(list.map(_adaptStk)))
-        .catch(()=>{});
-    });
+    const loadContacts = () => {
+      (window.__CM_KEY_READY__ || Promise.resolve(window.__API_KEY__||'')).then(k=>{
+        const b = (window.__API_BASE__ || '/api').replace(/\/$/, '');
+        fetch(`${b}/stakeholders?limit=500`, k ? {headers:{'X-API-Key':k}} : {})
+          .then(r => r.ok ? r.json() : [])
+          .then(list => setContacts(list.map(_adaptStk)))
+          .catch(()=>{});
+      });
+    };
+    loadContacts();
+    const timer = setInterval(loadContacts, 5 * 60 * 1000);
+    return () => clearInterval(timer);
   },[]);
 
   const addCaptura = async (text) => {

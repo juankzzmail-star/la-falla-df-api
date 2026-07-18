@@ -1,6 +1,6 @@
 import os
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -237,8 +237,23 @@ def list_stakeholders(
     return [_row_to_out(r) for r in rows]
 
 
-@router.post("", response_model=StakeholderOut, status_code=201)
+@router.post("", status_code=201)
 def create_stakeholder(body: StakeholderCreate, db: Session = Depends(get_db)):
+    if _STK_SERVICE_URL:
+        try:
+            resp = httpx.post(
+                f"{_STK_SERVICE_URL}/stakeholders",
+                headers={"X-API-Key": _STK_SERVICE_KEY, "Content-Type": "application/json"},
+                json=body.model_dump(exclude_none=True),
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            _notify_n8n("created", data.get("id", 0), data)
+            return JSONResponse(content=data, status_code=201)
+        except Exception:
+            pass
+
     result = db.execute(
         text("""
             INSERT INTO stakeholders_master
@@ -255,8 +270,20 @@ def create_stakeholder(body: StakeholderCreate, db: Session = Depends(get_db)):
     return out
 
 
-@router.get("/{stakeholder_id}", response_model=StakeholderOut)
+@router.get("/{stakeholder_id}")
 def get_stakeholder(stakeholder_id: int, db: Session = Depends(get_db)):
+    if _STK_SERVICE_URL:
+        try:
+            resp = httpx.get(
+                f"{_STK_SERVICE_URL}/stakeholders/{stakeholder_id}",
+                headers={"X-API-Key": _STK_SERVICE_KEY},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            return JSONResponse(content=resp.json())
+        except Exception:
+            pass
+
     row = db.execute(
         text("""
             SELECT id, nombre, rol, correo, telefono, ubicacion,
@@ -271,8 +298,28 @@ def get_stakeholder(stakeholder_id: int, db: Session = Depends(get_db)):
     return _row_to_out(row)
 
 
-@router.patch("/{stakeholder_id}", response_model=StakeholderOut)
+@router.patch("/{stakeholder_id}")
 def update_stakeholder(stakeholder_id: int, body: StakeholderPatch, db: Session = Depends(get_db)):
+    if _STK_SERVICE_URL:
+        try:
+            payload = body.model_dump(exclude_none=True)
+            if not payload:
+                raise HTTPException(400, "Sin campos para actualizar")
+            resp = httpx.patch(
+                f"{_STK_SERVICE_URL}/stakeholders/{stakeholder_id}",
+                headers={"X-API-Key": _STK_SERVICE_KEY, "Content-Type": "application/json"},
+                json=payload,
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            _notify_n8n("updated", stakeholder_id, data)
+            return JSONResponse(content=data)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
     data = body.model_dump(exclude_none=True)
     if not data:
         raise HTTPException(400, "Sin campos para actualizar")
@@ -306,6 +353,19 @@ def update_stakeholder(stakeholder_id: int, body: StakeholderPatch, db: Session 
 
 @router.delete("/{stakeholder_id}", status_code=204)
 def delete_stakeholder(stakeholder_id: int, db: Session = Depends(get_db)):
+    if _STK_SERVICE_URL:
+        try:
+            resp = httpx.delete(
+                f"{_STK_SERVICE_URL}/stakeholders/{stakeholder_id}",
+                headers={"X-API-Key": _STK_SERVICE_KEY},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            _notify_n8n("deleted", stakeholder_id, {})
+            return Response(status_code=204)
+        except Exception:
+            pass
+
     result = db.execute(
         text("DELETE FROM stakeholders_master WHERE id = :id"),
         {"id": stakeholder_id},
