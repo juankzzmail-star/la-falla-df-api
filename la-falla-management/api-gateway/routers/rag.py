@@ -1,45 +1,72 @@
-"""RAG — Retrieval Augmented Generation usando pgvector + Ollama nomic-embed-text."""
+"""RAG — Retrieval Augmented Generation for the Centro de Mando.
+
+Embeddings come from a configurable provider (default OpenAI `text-embedding-3-small`); each vector is
+stored as a JSONB float array and similarity is computed in-app (cosine in Python). This deliberately
+does NOT use pgvector: the production Postgres has the `vector` extension registered but its
+`$libdir/vector` library is missing, so every `::vector` insert/query errors (change wire-document-rag).
+"""
 import json
+import logging
+import math
 import os
-import textwrap
 from typing import Optional
 
-import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 
 router = APIRouter(prefix="/rag", tags=["rag"])
+log = logging.getLogger(__name__)
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-OLLAMA_URL   = os.environ.get("OLLAMA_URL", "http://10.0.1.27:11434")
-EMBED_MODEL  = "nomic-embed-text"
-CHUNK_SIZE   = 600   # chars per chunk
-CHUNK_OVERLAP = 80   # chars of overlap between chunks
-
-
-# ─── Core helpers ─────────────────────────────────────────────────────────────
-
-def get_embedding(text: str) -> list[float]:
-    """Genera embedding de 768 dims con nomic-embed-text vía Ollama."""
-    r = requests.post(
-        f"{OLLAMA_URL}/api/embed",
-        json={"model": EMBED_MODEL, "input": text},
-        timeout=30,
-    )
-    r.raise_for_status()
-    embs = r.json().get("embeddings", [[]])
-    if not embs or not embs[0]:
-        raise ValueError("Ollama returned empty embedding")
-    return embs[0]
+EMBED_PROVIDER = os.environ.get("EMBED_PROVIDER", "openai").lower()
+EMBED_MODEL    = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
+CHUNK_SIZE     = 600   # chars per chunk
+CHUNK_OVERLAP  = 80    # chars of overlap between chunks
+# Cosine floor below which a chunk is treated as irrelevant (conservative for a small corpus).
+MIN_SIMILARITY = float(os.environ.get("RAG_MIN_SIMILARITY", "0.15"))
 
 
-def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Divide texto en chunks con overlap para preservar contexto en fronteras."""
-    if not text.strip():
+def _db_url() -> str:
+    # Read at call time (not import) so tests can point DATABASE_URL at an isolated DB.
+    return os.environ.get("DATABASE_URL", "")
+
+
+def _engine():
+    return create_engine(_db_url(), pool_pre_ping=True)
+
+
+# ─── Embeddings (configurable provider) ──────────────────────────────────────
+
+def get_embedding(text_in: str) -> list[float]:
+    """Embed `text_in` with the configured provider (default OpenAI text-embedding-3-small)."""
+    provider = EMBED_PROVIDER
+    if provider == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY no configurada")
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        resp = client.embeddings.create(model=EMBED_MODEL, input=text_in)
+        return list(resp.data[0].embedding)
+    if provider == "ollama":
+        import requests
+        url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+        r = requests.post(f"{url}/api/embed", json={"model": EMBED_MODEL, "input": text_in}, timeout=30)
+        r.raise_for_status()
+        embs = r.json().get("embeddings", [[]])
+        if not embs or not embs[0]:
+            raise ValueError("Ollama returned empty embedding")
+        return list(embs[0])
+    raise ValueError(f"EMBED_PROVIDER desconocido: {provider!r}")
+
+
+# ─── Chunking ────────────────────────────────────────────────────────────────
+
+def chunk_text(text_in: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    """Split text into overlapping chunks to preserve context across boundaries."""
+    if not text_in or not text_in.strip():
         return []
-    # Split on paragraph breaks first, then merge into chunks
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    paragraphs = [p.strip() for p in text_in.split("\n") if p.strip()]
     chunks: list[str] = []
     current = ""
     for para in paragraphs:
@@ -48,13 +75,14 @@ def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) 
         else:
             if current:
                 chunks.append(current)
-            # Start new chunk with overlap from previous
             tail = current[-overlap:] if len(current) > overlap else current
             current = (tail + "\n" + para).strip()
     if current:
         chunks.append(current)
     return chunks
 
+
+# ─── Store / search (JSONB + in-app cosine, no pgvector) ─────────────────────
 
 def embed_and_store(
     source_type: str,
@@ -63,66 +91,111 @@ def embed_and_store(
     source_id: Optional[str] = None,
     metadata: Optional[dict] = None,
 ) -> int:
-    """Chunkea texto, genera embeddings y los guarda en document_chunks. Retorna N chunks insertados."""
-    if not DATABASE_URL:
+    """Chunk, embed and persist `doc_text` into document_chunks (replace-on-reingest => idempotent).
+    Returns the number of chunks stored."""
+    if not _db_url():
         raise ValueError("DATABASE_URL no configurada")
     chunks = chunk_text(doc_text)
     if not chunks:
         return 0
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    engine = _engine()
+    is_pg = engine.dialect.name == "postgresql"
+    # Postgres needs an explicit text->jsonb cast on insert; SQLite (tests) stores the JSON string.
+    emb_expr  = "CAST(:emb AS JSONB)"  if is_pg else ":emb"
+    meta_expr = "CAST(:meta AS JSONB)" if is_pg else ":meta"
+    stored = 0
     with engine.begin() as conn:
-        conn.execute(text("""
-            DELETE FROM document_chunks
-            WHERE source_type = :st AND source_name = :sn
-        """), {"st": source_type, "sn": source_name})
-
-        stored = 0
+        conn.execute(
+            text("DELETE FROM document_chunks WHERE source_type = :st AND source_name = :sn"),
+            {"st": source_type, "sn": source_name},
+        )
         for i, chunk in enumerate(chunks):
             try:
                 emb = get_embedding(chunk)
-                # Both ::vector and ::jsonb cast with literal to avoid SQLAlchemy :param:: conflict
-                emb_literal  = "'" + "[" + ",".join(str(v) for v in emb) + "]" + "'::vector"
-                meta_literal = "'" + json.dumps(metadata or {}).replace("'", "''") + "'::jsonb"
-                conn.execute(text(f"""
-                    INSERT INTO document_chunks
-                        (source_type, source_id, source_name, chunk_index, chunk_text, embedding, metadata)
-                    VALUES
-                        (:st, :sid, :sn, :idx, :txt, {emb_literal}, {meta_literal})
-                """), {
-                    "st":  source_type,
-                    "sid": source_id,
-                    "sn":  source_name,
-                    "idx": i,
-                    "txt": chunk,
-                })
-                stored += 1
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning("RAG chunk %d embed error: %s", i, exc)
+            except Exception as exc:  # one bad chunk must not abort the rest
+                log.warning("RAG embed error on chunk %d of %s: %s", i, source_name, exc)
+                continue
+            conn.execute(text(f"""
+                INSERT INTO document_chunks
+                    (source_type, source_id, source_name, chunk_index, chunk_text, embedding, metadata)
+                VALUES
+                    (:st, :sid, :sn, :idx, :txt, {emb_expr}, {meta_expr})
+            """), {
+                "st":  source_type,
+                "sid": source_id,
+                "sn":  source_name,
+                "idx": i,
+                "txt": chunk,
+                "emb": json.dumps(emb),
+                "meta": json.dumps(metadata or {}),
+            })
+            stored += 1
     return stored
 
 
-def similarity_search(query: str, limit: int = 5, source_type: Optional[str] = None) -> list[dict]:
-    """Busca chunks relevantes por similitud coseno."""
-    if not DATABASE_URL:
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _as_vector(raw) -> list[float]:
+    """Coerce a stored embedding (JSONB list from psycopg2, or a JSON string from SQLite) to floats."""
+    if raw is None:
         return []
-    emb = get_embedding(query)
-    emb_literal = "'" + "[" + ",".join(str(v) for v in emb) + "]" + "'::vector"
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    try:
+        return [float(x) for x in raw]
+    except Exception:
+        return []
+
+
+def similarity_search(
+    query: str,
+    limit: int = 5,
+    source_type: Optional[str] = None,
+    min_similarity: Optional[float] = None,
+) -> list[dict]:
+    """Top-`limit` chunks by in-app cosine similarity to `query`, above the similarity floor."""
+    if not _db_url():
+        return []
+    floor = MIN_SIMILARITY if min_similarity is None else float(min_similarity)
+    q_emb = get_embedding(query)
+    engine = _engine()
     with engine.connect() as conn:
-        where = "WHERE source_type = :st" if source_type else ""
-        params: dict = {"lim": limit}
+        where = "WHERE embedding IS NOT NULL"
+        params: dict = {}
         if source_type:
+            where += " AND source_type = :st"
             params["st"] = source_type
         rows = conn.execute(text(f"""
-            SELECT source_type, source_name, chunk_index, chunk_text,
-                   1 - (embedding <=> {emb_literal}) AS similarity
+            SELECT source_type, source_name, chunk_index, chunk_text, embedding
             FROM document_chunks
             {where}
-            ORDER BY embedding <=> {emb_literal}
-            LIMIT :lim
         """), params).fetchall()
-    return [dict(r._mapping) for r in rows]
+    scored: list[dict] = []
+    for r in rows:
+        m = dict(r._mapping)
+        sim = _cosine(q_emb, _as_vector(m.get("embedding")))
+        if sim >= floor:
+            scored.append({
+                "source_type": m["source_type"],
+                "source_name": m["source_name"],
+                "chunk_index": m["chunk_index"],
+                "chunk_text": m["chunk_text"],
+                "similarity": round(sim, 4),
+            })
+    scored.sort(key=lambda x: x["similarity"], reverse=True)
+    return scored[:limit]
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -143,8 +216,8 @@ class EmbedRequest(BaseModel):
 
 @router.post("/embed")
 def embed_document(req: EmbedRequest):
-    """Chunkea y embede un texto. Úsalo para indexar documentos manualmente."""
-    if not DATABASE_URL:
+    """Chunk + embed a text. Use it to index documents manually."""
+    if not _db_url():
         raise HTTPException(503, "DATABASE_URL no configurada.")
     try:
         n = embed_and_store(
@@ -161,8 +234,8 @@ def embed_document(req: EmbedRequest):
 
 @router.post("/search")
 def search_docs(req: SearchRequest):
-    """Búsqueda semántica sobre documentos indexados. Retorna chunks más relevantes."""
-    if not DATABASE_URL:
+    """Semantic search over indexed documents. Returns the most relevant chunks."""
+    if not _db_url():
         raise HTTPException(503, "DATABASE_URL no configurada.")
     if not req.query.strip():
         raise HTTPException(400, "Query vacío.")
@@ -175,10 +248,10 @@ def search_docs(req: SearchRequest):
 
 @router.get("/stats")
 def rag_stats():
-    """Estadísticas del índice RAG."""
-    if not DATABASE_URL:
+    """RAG index statistics."""
+    if not _db_url():
         raise HTTPException(503, "DATABASE_URL no configurada.")
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    engine = _engine()
     with engine.connect() as conn:
         row = conn.execute(text("""
             SELECT

@@ -14,7 +14,7 @@ function useApiData(key) {
 }
 
 /* Carga datos de un área específica desde el API (on-demand al abrir deploy) */
-const AREA_ID_MAP = { gcf:'Comercial', gp:'Proyectos', gi:'Investigacion', ga:'Audiovisual' };
+const AREA_ID_MAP = { dc:'Comercial', dp:'Proyectos', di:'Investigacion', da:'Audiovisual' };
 function useAreaData(areaId) {
   const [data, setData] = useState(null);
   useEffect(()=>{
@@ -108,7 +108,8 @@ function SubHeader({ period, setPeriod, onRoadmap, onVision }){
   return (
     <div className="sub-hdr">
       <div className="context">
-        <strong>{dia.charAt(0).toUpperCase()+dia.slice(1)}</strong> · cuatro áreas en marcha · 3 decisiones pendientes · foco del día: alianzas Q2
+        {/* honest: solo la fecha real. Se eliminó la narrativa fija (decisiones/foco) que no proviene de datos. */}
+        <strong>{dia.charAt(0).toUpperCase()+dia.slice(1)}</strong>
       </div>
       <div className="seg">
         {['Hoy','Semana','Mensual'].map(p => (
@@ -136,29 +137,26 @@ function SubHeader({ period, setPeriod, onRoadmap, onVision }){
 // ---- PULSO: heatmap de áreas × días ----
 // Valores: 4=Óptimo (feedback>4.5, 0h extra) | 3=Estable (≤40h) | 2=Fricción (sobrecosto/caída) | 1=Crítico (>50h o <10% libres)
 const PULSO_ROWS = [
-  { area:'GCF · Comercial',   values:[3,3,4,4,3,3,4], score:78 },
-  { area:'GP  · Proyectos',   values:[3,2,2,1,1,2,2], score:64 },  // Rutas Cafeteras 02: presión escalando
-  { area:'GI  · Investig.',   values:[4,4,4,3,4,4,3], score:82 },
-  { area:'GA  · Audiovisual', values:[3,3,2,2,2,1,3], score:66 },  // Piloto día 3/5: intensidad alta
+  { area:'DC · Comercial',   values:[3,3,4,4,3,3,4], score:78 },
+  { area:'DP · Proyectos',   values:[3,2,2,1,1,2,2], score:64 },  // Rutas Cafeteras 02: presión escalando
+  { area:'DI · Investig.',   values:[4,4,4,3,4,4,3], score:82 },
+  { area:'DA · Audiovisual', values:[3,3,2,2,2,1,3], score:66 },  // Piloto día 3/5: intensidad alta
 ];
 const DAYS = ['L','M','X','J','V','S','D'];
 
 function PulsoViz({ compact=false, rows }){
-  const data = rows || PULSO_ROWS;
+  // honest: barra de carga por dirección (deriva del backlog real de tareas). Sin encabezado de días —
+  // no hay medición diaria, así que cada fila es el nivel real de la dirección, no 7 días distintos.
+  const data = rows && rows.length ? rows : [];
+  if(!data.length) return <div className={'pulso-heat' + (compact?' compact':'')}/>;
   return (
     <div className={'pulso-heat' + (compact?' compact':'')}>
-      {compact ? null : (
-        <div className="pulso-head">
-          <span className="pulso-axis">ÁREAS ↓ · DÍAS →</span>
-          <div className="pulso-days">{DAYS.map(d=><span key={d}>{d}</span>)}</div>
-        </div>
-      )}
       <div className="pulso-rows">
         {data.map(r=>(
           <div key={r.area} className="pulso-row">
             {!compact && <span className="pulso-label">{r.area}</span>}
             <div className="pulso-cells">
-              {r.values.map((v,i)=><span key={i} className={'px v'+v}/>)}
+              {(r.values||[]).map((v,i)=><span key={i} className={'px v'+v}/>)}
             </div>
           </div>
         ))}
@@ -175,31 +173,43 @@ const VISION_ARCS = [
   { label:'EJE ESTRAT.', value:58, color:'var(--ink)'   },
 ];
 function RadialViz({ size=180, arcs }){
-  const data = arcs || VISION_ARCS;
+  // honest: sin arcos reales no se pinta el gauge de ejemplo.
+  const data = arcs && arcs.length ? arcs : [];
   const cx = size/2, cy = size/2;
   const strokeW = size/14;
+  // Capa 6: los arcos se LLENAN de 0 → su valor real (strokeDashoffset). __fx respeta reduced-motion
+  // (si está activo, el JSX ya pinta el estado final lleno) y limpia con context().revert().
+  const rootRef = React.useRef(null);
+  React.useLayoutEffect(()=>{
+    if(!window.__fx) return;
+    const ctx = window.__fx.fillArcs(rootRef.current);
+    return ()=> ctx && ctx.revert();
+  }, [data.map(a=>a.value).join(',')]);
   return (
-    <div className="radial-viz">
+    <div className="radial-viz" ref={rootRef}>
       <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
         {data.map((a,i)=>{
           const r = (size/2) - strokeW/2 - i*(strokeW+2);
           const C = 2*Math.PI*r;
-          const dash = (a.value/100) * C;
+          // honest: null value = no data, draw an empty track (no filled arc), never 0% as a real reading.
+          const dash = (a.value != null ? a.value/100 : 0) * C;
           return (
             <g key={a.label} transform={`rotate(-90 ${cx} ${cy})`}>
               <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--line)" strokeWidth={strokeW}/>
-              <circle cx={cx} cy={cy} r={r} fill="none" stroke={a.color} strokeWidth={strokeW}
-                      strokeLinecap="round" strokeDasharray={`${dash} ${C}`}/>
+              <circle className="radial-arc" cx={cx} cy={cy} r={r} fill="none" stroke={a.color} strokeWidth={strokeW}
+                      strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C - dash}
+                      data-start={C} data-target={C - dash}/>
             </g>
           );
         })}
       </svg>
       <div className="radial-legend">
+        {data.length === 0 && <div className="rl" style={{color:'var(--mute)'}}><span className="rl-l">sin datos</span></div>}
         {data.map(a=>(
           <div key={a.label} className="rl">
             <span className="rl-dot" style={{background:a.color}}/>
             <span className="rl-l">{a.label}</span>
-            <span className="rl-v num-mono">{a.value}%</span>
+            <span className="rl-v num-mono">{a.value != null ? a.value+'%' : 'sin datos'}</span>
           </div>
         ))}
       </div>
@@ -213,10 +223,20 @@ const CAJA_MONTHS = [
   ['N',7.8],['D',8.1],['E',8.4],['F',8.7],['M',9.0],['A',9.2],
 ];
 function CajaViz({ compact=false, months }){
-  const data = months && months.length >= 2 ? months : CAJA_MONTHS;
+  // honest: sin meses reales (>=2) no se pinta la tendencia de ejemplo.
+  const data = months && months.length >= 2 ? months : [];
+  // Capa 6: las columnas suben de 0 → su altura real al montar (scaleY desde abajo). Hook ANTES del
+  // return temprano (Reglas de Hooks). Si hay reduced-motion o GSAP no cargó, __fx no anima.
+  const barsRef = React.useRef(null);
+  React.useLayoutEffect(()=>{
+    if(!window.__fx || !data.length) return;
+    const ctx = window.__fx.fillBars(barsRef.current);
+    return ()=> ctx && ctx.revert();
+  }, [data.length, data.map(m=>m[1]).join(',')]);
+  if(!data.length) return <div className={'caja-bars' + (compact?' compact':'')}/>;
   const max = Math.max(...data.map(m=>m[1]));
   return (
-    <div className={'caja-bars' + (compact?' compact':'')}>
+    <div className={'caja-bars' + (compact?' compact':'')} ref={barsRef}>
       {data.map(([m,v],i)=>{
         const isLast = i===data.length-1;
         return (
@@ -231,17 +251,51 @@ function CajaViz({ compact=false, months }){
   );
 }
 
-function KPIs({ onOpen }){
+function KPIs({ onOpen, period }){
   const pulso = useApiData('pulso');
   const arcs  = useApiData('arcs');
   const caja  = useApiData('caja');
 
-  const saludScore = pulso ? Math.round(pulso.salud_global) : 72;
-  const saludDelta = pulso ? (pulso.delta >= 0 ? '+' : '') + pulso.delta : '+4';
+  // change period-aware-pulso: la Salud operativa responde a HOY/SEMANA/MENSUAL por horizonte de
+  // vencimiento. El número casi no se mueve (todo es backlog vencido), pero el DRIVER lo dice honesto:
+  // "sin trabajo agendado para este horizonte" vs "N vencen este periodo".
+  const PK = { 'Hoy':'hoy', 'Semana':'semana', 'Mensual':'mensual' };
+  const pk = PK[period] || 'hoy';
+  const periodLbl = { 'Hoy':'hoy', 'Semana':'esta semana', 'Mensual':'este mes' }[period] || 'hoy';
+  const sgp = pulso && pulso.salud_global_periodo ? pulso.salud_global_periodo[pk] : null;
+  const saludRaw = sgp != null ? sgp : (pulso && pulso.salud_global != null ? pulso.salud_global : null);
+  const saludScore = saludRaw != null ? Math.round(saludRaw) : '—';
+  const vencenPeriodo = pulso && pulso.rows ? pulso.rows.reduce((s,r)=> s + ((r.periodo && r.periodo[pk]) ? (r.periodo[pk].vencen||0) : 0), 0) : 0;
+  const totalOverdue  = pulso && pulso.rows ? pulso.rows.reduce((s,r)=> s + (r.overdue||0), 0) : 0;
+  const driverTxt = !pulso ? 'Datos no disponibles'
+    : vencenPeriodo > 0
+      ? `${vencenPeriodo} ${vencenPeriodo===1?'tarea vence':'tareas vencen'} ${periodLbl} · ${totalOverdue} vencidas`
+      : `Sin trabajo agendado ${periodLbl} — ${totalOverdue} vencidas (backlog)`;
   const v2030arc   = arcs  ? arcs.find(a=>a.label==='EJE ESTRAT.') : null;
-  const v2030val   = v2030arc ? Math.round(v2030arc.value) : 58;
-  const cajaMonto  = caja ? caja.latest.total : 9.2;
-  const cajaMeses  = caja ? caja.latest.meses : 9;
+  const v2030val   = (v2030arc && v2030arc.value != null) ? Math.round(v2030arc.value) : '—';
+  // change relabel-avance-2030 (AUD-024): the subtitle states declared hito status with real counts,
+  // never a work-pace phrase. The % is estado-derived; wiring it to real task completion is a separate change.
+  const v2030foot  = !arcs ? 'Datos no disponibles'
+    : (arcs.total != null
+        ? `${arcs.done}/${arcs.total} hitos marcados${arcs.sinRespaldo ? ` · ${arcs.sinRespaldo} sin respaldo` : ''}`
+        : 'Avance de hitos');
+  const cajaMonto  = caja?.latest?.total != null ? caja.latest.total : '—';
+  const cajaMeses  = caja?.latest?.meses != null ? caja.latest.meses : null;
+  // change rigorous-progress-math: el número honesto es el CASH runway (caja+reservas), no el funded
+  const cashRunway   = caja?.latest?.cashRunway != null ? caja.latest.cashRunway : null;
+  const fundedRunway = caja?.latest?.fundedRunway != null ? caja.latest.fundedRunway : null;
+
+  // change frontend-fluidity (GSAP): count the real KPI numbers up from 0 when data arrives ("—" is
+  // skipped — never animate a non-number). __fx honors reduced-motion (sets the final value instantly).
+  const nPulso = React.useRef(null), nVision = React.useRef(null), nCaja = React.useRef(null);
+  React.useLayoutEffect(()=>{
+    if(!window.__fx) return;
+    const k = [];
+    if(typeof saludScore === 'number') k.push(window.__fx.countUp(nPulso.current, saludScore));
+    if(typeof v2030val === 'number')   k.push(window.__fx.countUp(nVision.current, v2030val));
+    if(typeof cajaMonto === 'number')  k.push(window.__fx.countUp(nCaja.current, cajaMonto, { fmt:(v)=> (Math.round(v*10)/10).toFixed(1) }));
+    return ()=> k.forEach(fn=> fn && fn());
+  },[saludScore, v2030val, cajaMonto]);
 
   return (
     <div className="kpis">
@@ -249,11 +303,10 @@ function KPIs({ onOpen }){
         <div className="eye">PULSO DEL COLECTIVO</div>
         <h3>Salud operativa global</h3>
         <div className="big">
-          <span className="n tabular">{saludScore}</span>
+          <span className="n tabular" ref={nPulso}>{saludScore}</span>
           <span className="u">/ 100</span>
-          <span className={'delta ' + (pulso && pulso.delta < 0 ? 'dn' : 'up')}>{saludDelta}</span>
         </div>
-        <div className="foot">Equilibrio entre áreas · 3 de 4 en verde</div>
+        <div className="foot">{driverTxt}</div>
         <PulsoViz compact rows={pulso ? pulso.rows : null}/>
         <span className="kpi-open">Ver detalle →</span>
       </button>
@@ -262,11 +315,10 @@ function KPIs({ onOpen }){
         <div className="eye">HACIA 2030</div>
         <h3>Ejecución estratégica</h3>
         <div className="big">
-          <span className="n tabular">{v2030val}</span>
+          <span className="n tabular" ref={nVision}>{v2030val}</span>
           <span className="u">%</span>
-          <span className="delta up">+6</span>
         </div>
-        <div className="foot">Captación adelantada · ejecución al ritmo</div>
+        <div className="foot">{v2030foot}</div>
         <div className="kpi-radial-mini">
           <RadialViz size={130} arcs={arcs}/>
         </div>
@@ -275,13 +327,19 @@ function KPIs({ onOpen }){
 
       <button className="kpi kpi-click" onClick={()=>onOpen('caja')}>
         <div className="eye">AIRE EN LA CAJA</div>
-        <h3>Liquidez operativa · 12 meses</h3>
+        {/* change caja-freshness-honesty (AUD-039): real month count, not a hardcoded "12 meses". */}
+        <h3>Liquidez operativa{caja?.mesesCount ? ` · ${caja.mesesCount} ${caja.mesesCount===1?'mes':'meses'}` : ''}</h3>
         <div className="big">
-          <span className="n tabular">{cajaMonto}</span>
+          <span className="n tabular" ref={nCaja}>{cajaMonto}</span>
           <span className="u">M COP</span>
-          <span className="delta up">+0.8M</span>
         </div>
-        <div className="foot">{cajaMeses} meses de respiración · tendencia al alza</div>
+        <div className="foot">{caja?.latest
+          ? (cashRunway != null
+              ? `${cashRunway} meses de caja${fundedRunway != null && fundedRunway !== cashRunway ? ` · ${fundedRunway} con crédito` : ''}`
+              : (cajaMeses != null ? cajaMeses+' meses de respiración' : 'Liquidez operativa'))
+          : 'Datos no disponibles'}</div>
+        {/* change caja-freshness-honesty (AUD-039): disclose the data's as-of date + a staleness badge. */}
+        {caja?.latest?.asOf && <div className="foot" style={{fontSize:'.8em', color:'var(--mute)', marginTop:'.15rem'}}>datos al {caja.latest.asOf}{caja.latest.stale ? ' · ⚠ desactualizado' : ''}</div>}
         <CajaViz months={caja ? caja.months : null}/>
         <span className="kpi-open">Ver detalle →</span>
       </button>
@@ -292,25 +350,19 @@ function KPIs({ onOpen }){
 /* ============================================================
    LECTURA DEL DÍA — stack vertical
    ============================================================ */
-const INITIAL_SUGS = [
-  { id:'s1', tag:'PROYECTOS', title:'Revisar sobrecosto Rutas Cafeteras 02',
-    body:'Desviación +7% detectada · 20 min para validar nueva línea base.' },
-  { id:'s2', tag:'COMERCIAL', title:'Enviar propuesta a Gob. Risaralda',
-    body:'Alianza abierta hace 12 días · ventana óptima esta semana.' },
-  { id:'s3', tag:'AUDIOVISUAL', title:'Aprobar guion Cumbre ACMI',
-    body:'Entrega compromiso: viernes · pendiente revisión final tuya.' },
-  { id:'s4', tag:'INVEST.', title:'Archivar territorio piloto «Eje»',
-    body:'Campo completo · listo para síntesis cartográfica.' },
-];
+const INITIAL_SUGS = [];
 
 function Lectura(){
   const apiSugs = useApiData('suggestions');
-  const [sugs, setSugs] = useState(INITIAL_SUGS);
+  const [sugs, setSugs] = useState([]);
+  const [engineRan, setEngineRan] = useState(false);
+
   const initialized = useRef(false);
   useEffect(()=>{
     if (apiSugs && !initialized.current) {
       initialized.current = true;
-      setSugs(apiSugs);
+      setSugs(apiSugs.items || []);
+      setEngineRan((apiSugs.generatedToday || 0) > 0);
     }
   }, [apiSugs]);
   const [leaving, setLeaving] = useState({});
@@ -333,8 +385,45 @@ function Lectura(){
   const openEdit = (s) => { setEditSug(s); setEditTitle(s.title); setEditBody(s.body); };
   const saveEdit = () => {
     if (!editSug) return;
-    setSugs(list => list.map(s => s.id===editSug.id ? {...s, title:editTitle, body:editBody} : s));
+    const id = editSug.id, t = editTitle, b = editBody;
     setEditSug(null);
+    // Editar = interactuar: persiste el cambio (el backend la marca 'editada') y CONSUME la tarjeta —
+    // se anima la salida y sube la siguiente (la 4ª, antes solo visible con scroll), igual que aceptar/eliminar.
+    const k = window.__API_KEY__ || '';
+    const base = (window.__API_BASE__ || '').replace(/\/$/,'');
+    fetch(`${base}/dashboard/suggestions/${id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json', ...(k ? {'X-API-Key':k} : {})},
+      body: JSON.stringify({titulo: t, cuerpo: b}),
+    }).catch(()=>{});
+    setLeaving(p => ({...p, [id]:true}));
+    setTimeout(()=> setSugs(list => list.filter(s=>s.id!==id)), 320);
+  };
+
+  const interviewData = useApiData('interview');
+  const pendingQuestions = interviewData?.questions || [];
+  const [inlineAnswers, setInlineAnswers] = useState({});
+  const [inlineSubmitting, setInlineSubmitting] = useState({});
+
+  const handleInlineSubmit = async (domain) => {
+    const textAns = inlineAnswers[domain];
+    if (!textAns) return;
+    setInlineSubmitting(p => ({ ...p, [domain]: true }));
+    const k = window.__API_KEY__ || '';
+    const b = (window.__API_BASE__ || '/api').replace(/\/$/, '');
+
+    try {
+      await fetch(`${b}/interview/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(k ? { 'X-API-Key': k } : {}) },
+        body: JSON.stringify({ domain, answer: { texto_libre: textAns, confirmado: true } })
+      });
+      window.location.reload();
+    } catch (e) {
+      console.error('Error al responder inline:', e);
+    } finally {
+      setInlineSubmitting(p => ({ ...p, [domain]: false }));
+    }
   };
 
   const visible = sugs.slice(0,3);
@@ -343,17 +432,56 @@ function Lectura(){
       <div className="lectura-head">
         <div>
           <div className="t">LECTURA DEL DÍA · <span className="gentil-brand-name">Gentil</span></div>
-          <h2>Tres movimientos <em>sugeridos</em></h2>
+          <h2>Movimientos <em>sugeridos</em></h2>
         </div>
-        <div className="count tabular">{visible.length} / {sugs.length}</div>
+        <div className="count tabular">{pendingQuestions.length + visible.length} / {pendingQuestions.length + sugs.length}</div>
       </div>
-      <div className="sug-stack">
-        {visible.length === 0 && (
-          <div className="sug-empty">Todo resuelto por hoy. Respira.</div>
+      {/* Solo ~3 caben en la ventana; el resto (hasta 6) se ve con scroll. Al consumir una visible,
+          la siguiente sube automáticamente al re-fluir la lista. */}
+      <div className={'sug-stack' + ((pendingQuestions.length + sugs.length) > 3 ? ' scrollable' : '')}>
+        {/* Pending Interview Questions Cards (Inject as high-priority suggestions) */}
+        {pendingQuestions.map((q) => {
+          const info = (window.SPECIALIST_INFO || {})[q.domain] || { icon:'💡', badge:q.domain.toUpperCase(), name:q.domain };
+          return (
+            <div key={`int-${q.domain}`} className="sug sug-interview-card" style={{ borderLeft:'3px solid var(--falla)', background:'rgba(0,255,65,0.03)' }}>
+              <span className="idx tabular">{info.icon || '•'}</span>
+              <div className="body">
+                <strong><span className="tag" style={{ color:'var(--falla)', background:'rgba(0,255,65,0.12)' }}>ACCIÓN REQUERIDA · {info.badge}</span>«{q.pregunta}»</strong>
+                <span style={{ marginTop:4, color:'var(--mute)', fontSize:11 }}>Esta pregunta quedó pendiente ("Aún no tengo este documento"). Adjunta un archivo o responde abajo:</span>
+                
+                {/* Inline Document Upload / Text Panel */}
+                <div className="sug-inline-panel" style={{ marginTop:8, display:'flex', gap:6, alignItems:'center' }}>
+                  <input
+                    type="text"
+                    placeholder="Escribe la respuesta o valor relevante..."
+                    value={inlineAnswers[q.domain] || ''}
+                    onChange={e => setInlineAnswers({ ...inlineAnswers, [q.domain]: e.target.value })}
+                    style={{ flex:1, background:'#0a0a0a', border:'1px solid #333', borderRadius:4, padding:'4px 8px', color:'#fff', fontSize:12 }}
+                  />
+                  <button
+                    onClick={() => handleInlineSubmit(q.domain)}
+                    disabled={inlineSubmitting[q.domain]}
+                    style={{ background:'var(--falla)', color:'#000', border:0, borderRadius:4, padding:'4px 10px', fontSize:11, fontWeight:700, cursor:'pointer' }}
+                  >
+                    {inlineSubmitting[q.domain] ? '...' : 'Integrar →'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {sugs.length === 0 && pendingQuestions.length === 0 && (
+          engineRan
+            ? <div className="sug-empty">Todo resuelto por hoy. Respira.</div>
+            : <div className="sug-empty sug-empty-idle">
+                Gentil aún no ha preparado la lectura de hoy.
+                <span>Se genera cada mañana; si sigue vacío, el motor no corrió.</span>
+              </div>
         )}
-        {visible.map((s,i) => (
+        {sugs.map((s,i) => (
           <div key={s.id} className={'sug ' + (leaving[s.id]?'out':'')}>
-            <span className="idx tabular">0{i+1}</span>
+            <span className="idx tabular">{i < 9 ? '0' : ''}{i+1}</span>
             <div className="body">
               <strong><span className="tag">{s.tag}</span>{s.title}</strong>
               <span>{s.body}</span>
@@ -402,24 +530,8 @@ function Lectura(){
 /* ============================================================
    EJECUCIÓN 2030 + MAPA DE RIESGOS
    ============================================================ */
-const SEGS_FALLBACK = [
-  { s:'done', t:'Identidad de marca' },
-  { s:'done', t:'Plataforma digital' },
-  { s:'done', t:'Red de aliados 1' },
-  { s:'done', t:'Piloto Eje' },
-  { s:'done', t:'Alianzas ministerio' },
-  { s:'done', t:'Modelo financiero' },
-  { s:'done', t:'Equipo base' },
-  { s:'done', t:'Gobierno de datos' },
-  { s:'done', t:'Narrativa pública' },
-  { s:'prog', t:'Cumbre ACMI (en curso)' },
-  { s:'late', t:'Laboratorio Risaralda' },
-  { s:'late', t:'Memoria 2025' },
-  { s:'', t:'Red de aliados 2' },
-  { s:'', t:'Circuito Audiovisual' },
-  { s:'', t:'Territorio Caribe' },
-  { s:'', t:'Escalado nacional' },
-];
+// change unify-strategy-execution: SEGS_FALLBACK (16 fabricated milestones) removed. The grid now
+// reads real roadmap_milestones; when empty it shows an honest "sin datos" state + DEMO badge.
 
 const SEG_DETAIL = {
   'Identidad de marca': {
@@ -454,7 +566,7 @@ const SEG_DETAIL = {
   },
   'Equipo base': {
     cuando:'Q2 2025', descripcion:'4 directoras + 2 externos clave contratados. Estructura organizacional operativa.',
-    logros:['4 gerencias activas: Comercial, Proyectos, Investigación, Audiovisual','Quinaya lidera finanzas con seguimiento semanal en Google Sheets','Manuales de funciones por cargo elaborados y distribuidos','Estructura lista para escalar a 8+ personas en 2027'],
+    logros:['4 gerencias activas: Comercial, Proyectos, Investigación, Audiovisual','Juan Carlos (Dir. Comercial y Financiera) lleva el control de caja con seguimiento semanal en Google Sheets','Manuales de funciones por cargo elaborados y distribuidos','Estructura lista para escalar a 8+ personas en 2027'],
     leccion:'Definir los manuales de funciones antes de contratar fue clave — redujo ambigüedades y conflictos de rol en los primeros 6 meses.',
   },
   'Gobierno de datos': {
@@ -525,7 +637,9 @@ function MilestoneModal({ seg, onClose }){
       <div className="hito-box" onClick={e=>e.stopPropagation()}>
         <div className="hito-hd">
           <div style={{flex:1}}>
-            <div className="hito-eye" style={{color}}>{stLabel} · {det.cuando||'—'}</div>
+            {/* change plan-quarterly-milestones: el trimestre ya no se asserta aquí (era hardcodeado,
+                doble-verdad). La fuente del Q es la "Hoja de Ruta del año" (Q del plan). */}
+            <div className="hito-eye" style={{color}}>{stLabel}</div>
             <h3 className="hito-title">{seg.t}</h3>
             <p className="hito-desc">{det.descripcion}</p>
           </div>
@@ -612,8 +726,12 @@ function MilestoneModal({ seg, onClose }){
 
 function Execution(){
   const apiMilestones = useApiData('milestones');
-  const segs = (apiMilestones && apiMilestones.length) ? apiMilestones : SEGS_FALLBACK;
+  const hasData = !!(apiMilestones && apiMilestones.length);
+  const segs = hasData ? apiMilestones : [];
   const doneCount = segs.filter(s=>s.s==='done').length;
+  // honest demo badge: hitos without anio are the legacy ddl_v2 seed (demo, not real planning data).
+  // Show DEMO until real hitos (with anio) exist — auto-flips to "DATOS REALES" then.
+  const isDemo = hasData && segs.every(s=>s.anio==null);
   const [selIdx, setSelIdx] = useState(null);
   const selSeg = selIdx !== null ? segs[selIdx] : null;
 
@@ -621,22 +739,33 @@ function Execution(){
     <div className="panel">
       <div className="panel-hd">
         <h3>Ejecución hacia <em>2030</em></h3>
-        <span className="hint">{segs.length} SEGMENTOS · {doneCount} COMPLETOS</span>
+        {!hasData
+          ? <span className="hint" style={{color:'var(--warn)'}}>SIN DATOS</span>
+          : isDemo
+          ? <span className="hint" style={{color:'var(--warn)'}}>DEMO · {segs.length} HITOS DE EJEMPLO</span>
+          : <span className="hint">{segs.length} SEGMENTOS · {doneCount} COMPLETOS</span>}
       </div>
-      <div className="exec-grid">
-        {segs.map((s,i)=>(
-          <div key={i} className={'exec-seg ' + s.s}
-               onClick={()=>setSelIdx(i)}>
-            <span className="tt">{s.t}</span>
-          </div>
-        ))}
-      </div>
-      <div className="exec-legend">
-        <span className="l"><span className="sq" style={{background:'var(--falla)'}}/>Completo</span>
-        <span className="l"><span className="sq" style={{background:'var(--ink-3)'}}/>En curso</span>
-        <span className="l"><span className="sq" style={{background:'var(--warn)'}}/>Retrasado</span>
-        <span className="l"><span className="sq" style={{background:'var(--line)'}}/>Pendiente · clic para detalle</span>
-      </div>
+      {hasData ? (<>
+        <div className="exec-grid">
+          {segs.map((s,i)=>(
+            <div key={i} className={'exec-seg ' + s.s}
+                 onClick={()=>setSelIdx(i)}>
+              <span className="tt">{s.t}</span>
+            </div>
+          ))}
+        </div>
+        <div className="exec-legend">
+          <span className="l"><span className="sq" style={{background:'var(--falla)'}}/>Completo</span>
+          <span className="l"><span className="sq" style={{background:'var(--ink-3)'}}/>En curso</span>
+          <span className="l"><span className="sq" style={{background:'var(--warn)'}}/>Retrasado</span>
+          <span className="l"><span className="sq" style={{background:'var(--line)'}}/>Pendiente · clic para detalle</span>
+        </div>
+      </>) : (
+        <div className="exec-empty" style={{padding:'24px 8px', color:'var(--mute)', fontSize:13, lineHeight:1.5}}>
+          Aún no hay hitos cargados. Defínelos en la pestaña <strong>Hitos</strong> de la plantilla
+          estratégica (o vía Subir Recurso); aparecerán aquí en cuanto existan en el roadmap.
+        </div>
+      )}
       <MilestoneModal seg={selSeg} onClose={()=>setSelIdx(null)}/>
     </div>
   );
@@ -773,10 +902,15 @@ function RiskModal({ pin, onClose }){
 
 function RiskMap(){
   const apiRisks = useApiData('risks');
-  const initPins = (apiRisks && apiRisks.length) ? apiRisks : PINS_FALLBACK;
+  // honest: only show real risks. apiRisks === undefined = aún cargando; [] = sin riesgos registrados.
+  const hasRisks = !!(apiRisks && apiRisks.length);
+  const initPins = hasRisks ? apiRisks : [];
   const [pins, setPins] = useState(initPins);
   const [selPin, setSelPin] = useState(null);
   const [dragging, setDragging] = useState(null);
+
+  // sync local pins with real API risks once they load (honest: never seed fabricated risks).
+  useEffect(()=>{ setPins(hasRisks ? apiRisks : []); }, [apiRisks, hasRisks]);
 
   const NR_COLOR = { high:'#cc3333', med:'#e89c2b', low:'#00C433' };
 
@@ -787,15 +921,32 @@ function RiskMap(){
   const handleDrop = (e, cx, cy) => {
     e.preventDefault();
     if(!dragging) return;
-    setPins(prev => prev.map(p => p.t===dragging.t ? {...p, x:cx, y:cy} : p));
+    const moved = dragging.x !== cx || dragging.y !== cy;
+    const id = dragging.id;
+    // Cell (0-3) → I×P value (1-4). The grid is 4×4, so a 5 collapses to 4 (visually identical).
+    const prob = cx + 1, imp = cy + 1, nr = prob * imp;
+    const nc = nr >= 16 ? 'high' : nr >= 6 ? 'med' : 'low';
+    setPins(prev => prev.map(p => p.t===dragging.t ? {...p, x:cx, y:cy, c:nc} : p));
     setDragging(null);
+    // Persist the move so it survives a reload (was local-only before).
+    if(moved && id != null){
+      const b = window.__API_BASE__ || '/api';
+      const k = window.__API_KEY__ || '';
+      fetch(`${b}/risks/${id}`, {
+        method:'PATCH',
+        headers:{'Content-Type':'application/json', ...(k?{'X-API-Key':k}:{})},
+        body: JSON.stringify({ impacto: imp, probabilidad: prob }),
+      }).catch(()=>{});
+    }
   };
 
   return (
     <div className="panel">
       <div className="panel-hd">
         <h3>Mapa de <em>riesgos</em></h3>
-        <span className="hint">IMPACTO × PROBABILIDAD · Arrastra para mover · Clic para análisis</span>
+        {pins.length
+          ? <span className="hint">IMPACTO × PROBABILIDAD · Arrastra para mover · Clic para análisis</span>
+          : <span className="hint" style={{color:'var(--mute)'}}>SIN RIESGOS REGISTRADOS</span>}
       </div>
       <div className="risk-map">
         <div className="y-axis">IMPACTO →</div>
@@ -832,15 +983,10 @@ function RiskMap(){
    BRANCH RAIL (columna derecha — nodos interactivos)
    ============================================================ */
 const BRANCHES = [
-  { id:'gcf', code:'GCF', t:'Dirección Comercial', sub:'Comercial & Financiera', icon:I.coin,
-    kpi:{ label:'Recaudación vs. Meta', value:'68%', target:'Meta Q2 · 620M COP', tone:'up' },
-    metrics:[
-      ['Recaudación YTD','420M','up'],
-      ['Meta Q2','620M',''],
-      ['Cobros 30d','42M','up'],
-      ['Alianzas activas','8',''],
-    ],
-    todos:[['ok','Cierre abril','reporte enviado',5],['w','Pitch FDC','presencial jueves',2],['c','Cartera +60d','2 clientes · $18M',0],['','Renovación MinCultura','jun 15',14]],
+  { id:'dc', code:'DC', t:'Dirección Comercial', sub:'Comercial & Financiera', director:'Juan Carlos', icon:I.coin,
+    kpi:{ label:'Recaudación vs. Meta', value:'—', target:'Sin datos', tone:'' },
+    metrics:[],
+    todos:[],
     services:[
       { name:'Hostinger VPS',    status:'ok',  kind:'paid', note:'plan anual' },
       { name:'Chatwoot',         status:'ok',  kind:'infra' },
@@ -849,15 +995,10 @@ const BRANCHES = [
       { name:'n8n',              status:'ok',  kind:'infra' },
     ]
   },
-  { id:'gp', code:'GP', t:'Dirección de Proyectos', sub:'Ejecución & Entregas', icon:I.clap,
-    kpi:{ label:'Índice de Ejecución', value:'78%', target:'On-time ratio · 7 proyectos activos', tone:'' },
-    metrics:[
-      ['Índice ejecución','78%',''],
-      ['Entregables 7d','7/9','up'],
-      ['Proyectos activos','7',''],
-      ['Sobrecosto medio','+4%','dn'],
-    ],
-    todos:[['c','Rutas Cafeteras 02','sobrecosto +7%',-3],['ok','Piloto «Eje»','día 3 de 5',4],['w','Laboratorio Risaralda','retraso 6d',-6],['','Cumbre ACMI','guion en revisión',1]],
+  { id:'dp', code:'DP', t:'Dirección de Proyectos', sub:'Ejecución & Entregas', director:'Alberto Gutiérrez (Beto)', icon:I.clap,
+    kpi:{ label:'Índice de Ejecución', value:'—', target:'Sin datos', tone:'' },
+    metrics:[],
+    todos:[],
     services:[
       { name:'Hostinger VPS',        status:'ok',  kind:'paid', note:'plan anual' },
       { name:'EasyPanel',            status:'ok',  kind:'paid' },
@@ -866,15 +1007,10 @@ const BRANCHES = [
       { name:'PostgreSQL',           status:'ok',  kind:'infra' },
     ]
   },
-  { id:'gi', code:'GI', t:'Dirección de Investigación', sub:'Conocimiento & Territorio', icon:I.map,
-    kpi:{ label:'Producción de Contenido', value:'23', target:'Documentos activos · 2 publicados Q2', tone:'up' },
-    metrics:[
-      ['Documentos activos','23','up'],
-      ['Publicaciones Q2','2','up'],
-      ['Territorios mapeados','4',''],
-      ['Síntesis pendientes','3',''],
-    ],
-    todos:[['ok','Eje · campo completo','listo para síntesis',7],['','Caribe · exploratorio','contactos abiertos',5],['w','Memoria 2025','atrasada 2 sem',-14],['ok','Drive auditado','Gentil confirma',10]],
+  { id:'di', code:'DI', t:'Dirección de Investigación', sub:'Conocimiento & Territorio', director:'Viviana Franco (Quinaya)', icon:I.map,
+    kpi:{ label:'Producción de Contenido', value:'—', target:'Sin datos', tone:'' },
+    metrics:[],
+    todos:[],
     services:[
       { name:'Hostinger VPS',  status:'ok',   kind:'paid', note:'plan anual' },
       { name:'Perplexity API', status:'ok',   kind:'paid' },
@@ -884,15 +1020,10 @@ const BRANCHES = [
       { name:'n8n',            status:'ok',   kind:'infra' },
     ]
   },
-  { id:'ga', code:'GA', t:'Dirección Audiovisual', sub:'Producción & Narrativa', icon:I.cam,
-    kpi:{ label:'Eficiencia de Producción', value:'6.2%', target:'Engagement · 12 piezas Q2', tone:'up' },
-    metrics:[
-      ['Eficiencia (eng.)','6.2%','up'],
-      ['Piezas Q2','12',''],
-      ['Alcance 30d','184K','up'],
-      ['Pauta activa','3M',''],
-    ],
-    todos:[['w','Guion ACMI','pendiente tu visto',0],['ok','Reel abril','publicado',8],['','Rodaje Piloto','día 3 de 5',3],['','Rebrand aliados','bocetos vie.',2]],
+  { id:'da', code:'DA', t:'Dirección Audiovisual', sub:'Producción & Narrativa', director:'Iván Marín', icon:I.cam,
+    kpi:{ label:'Eficiencia de Producción', value:'—', target:'Sin datos', tone:'' },
+    metrics:[],
+    todos:[],
     services:[
       { name:'Hostinger VPS',       status:'ok',      kind:'paid', note:'plan anual' },
       { name:'Meta Ads (pauta)',     status:'unknown', kind:'paid' },
@@ -902,6 +1033,7 @@ const BRANCHES = [
     ]
   },
 ];
+
 
 function branchStatus(b){
   const s = b.services || [];
@@ -914,18 +1046,24 @@ function branchStatus(b){
 
 const SVC_STATUS_LABEL = { ok:'Servicios activos', warn:'Atención requerida', down:'Servicio caído', unknown:'Estado desconocido' };
 
+// Interfaz "Oportunidades La Falla" (ordenada por Programas), no la grid cruda.
+const AIRTABLE_INTERFACE_URL = 'https://airtable.com/appeZ7xMJUavBzkXD/pagb5f9brHezNhLOv';
+
 function BranchRail({ active, onPick }){
   const execFeed = useApiData('executive_feed');
-  const focoTitle   = execFeed?.foco_semana || 'Cierre contrato Risaralda Film';
-  const focoArea    = execFeed?.hitos_activos?.[0]?.area || 'Comercial';
+  const ops = useApiData('oportunidades');
+  // honest: cuando el API no entrega feed real, "datos no disponibles" — sin titulares fabricados.
+  const NA = 'Datos no disponibles';
+  const focoTitle   = execFeed?.foco_semana || NA;
+  const focoArea    = execFeed?.hitos_activos?.[0]?.area || null;
   const hito        = execFeed?.proximo_hito_critico;
-  const hitoTitle   = hito?.titulo || 'Entrega rough cut · Manizales Doc';
-  const hitoPct     = hito?.pct_completado ?? 72;
-  const hitoArea    = hito?.area || 'Audiovisual';
+  const hitoTitle   = hito?.titulo || NA;
+  const hitoPct     = hito?.pct_completado != null ? hito.pct_completado : null;
+  const hitoArea    = hito?.area || null;
   const riesgo      = execFeed?.riesgo_abierto;
-  const riesgoTitle = riesgo?.titulo || 'Retraso proveedor post-producción';
-  const riesgoNivel = riesgo?.nivel  || 'Alto impacto';
-  const riesgoEst   = riesgo?.estado || 'En gestión';
+  const riesgoTitle = riesgo?.titulo || (execFeed ? 'Sin riesgos abiertos' : NA);
+  const riesgoNivel = riesgo?.nivel  || null;
+  const riesgoEst   = riesgo?.estado || null;
   const hitoChip    = hitoArea === 'Audiovisual' ? 'rex-chip-audio' : 'rex-chip-ok';
   const [openSvc, setOpenSvc] = useState(null);
 
@@ -952,6 +1090,7 @@ function BranchRail({ active, onPick }){
                 <span className="code">{b.code}</span>
                 <span className="t">{b.t}</span>
                 <span className="sub">{b.sub}</span>
+                {b.director && <span className="dir">{b.director}</span>}
               </span>
               <span
                 className={'branch-svc-dot d-'+st}
@@ -980,34 +1119,74 @@ function BranchRail({ active, onPick }){
       <div className="rail-exec">
         <div className="rex-eye"><span className="gentil-brand-name">Gentil</span> · lectura ejecutiva</div>
 
+        {ops && ops.length > 0 && (
+          <div className="rex-block">
+            <div className="rex-lbl">Oportunidades · alto ADN</div>
+            {ops.slice(0, 6).map(function(o){
+              var at = AIRTABLE_INTERFACE_URL;
+              return (
+                <div key={o.id} className={'rex-opp' + (o.url ? ' is-live' : '')}>
+                  <span style={{fontFamily:'var(--f-num,ui-monospace,monospace)', fontWeight:700, fontSize:12, minWidth:22, textAlign:'right', color:(o.adn>=80 ? '#00FF41' : 'inherit')}}>
+                    {o.adn!=null ? o.adn : '—'}
+                  </span>
+                  <span style={{flex:1, minWidth:0}}>
+                    {o.url
+                      ? <a href={o.url} target="_blank" rel="noopener noreferrer" style={{display:'block', fontSize:11.5, fontWeight:600, lineHeight:1.2, color:'inherit', textDecoration:'none'}}>{o.nombre}</a>
+                      : <span style={{display:'block', fontSize:11.5, fontWeight:600, lineHeight:1.2}}>{o.nombre}</span>}
+                    <span style={{fontSize:10, opacity:.65}}>
+                      {o.prioridad}{o.prioridad && o.cierre ? ' · ' : ''}{o.cierre ? 'cierra '+o.cierre : ''}
+                    </span>
+                  </span>
+                  {at && (
+                    <a href={at} target="_blank" rel="noopener noreferrer" className="at-link" title="Abrir en la interfaz de Airtable (Oportunidades La Falla, por programa)">
+                      <svg width="15" height="13" viewBox="0 0 256 215" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <path fill="#FCB400" d="M114.25 2.435 18.57 41.99c-5.32 2.2-5.265 9.78.087 11.904l96.07 38.13a35.65 35.65 0 0 0 26.385 0l96.07-38.13c5.352-2.124 5.407-9.704.088-11.904L137.575 2.435a35.65 35.65 0 0 0-23.325 0"/>
+                        <path fill="#18BFFF" d="M139.49 114.16v95.137c0 4.524 4.565 7.62 8.768 5.953l107.06-41.56a6.403 6.403 0 0 0 4.034-5.953V72.6c0-4.524-4.565-7.62-8.768-5.953l-107.06 41.56a6.403 6.403 0 0 0-4.034 5.953"/>
+                        <path fill="#F82B60" d="M114.123 119.123 82.348 134.46l-3.227 1.558-66.948 32.084c-4.245 2.043-9.7-1.05-9.7-5.76V72.997c0-1.705.874-3.178 2.05-4.288a7.42 7.42 0 0 1 1.585-1.18c1.566-.94 3.799-1.19 5.698-.44l101.748 40.32c5.176 2.053 5.582 9.31.52 11.734"/>
+                      </svg>
+                    </a>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <div className="rex-block rex-focus">
           <div className="rex-lbl">Foco · Esta semana</div>
           <div className="rex-title">{focoTitle}</div>
-          <div className="rex-meta">
-            <span className="rex-chip rex-chip-ok">{focoArea}</span>
-            <span className="rex-pr">Prioridad <strong>01 / 03</strong></span>
-          </div>
+          {focoArea && (
+            <div className="rex-meta">
+              <span className="rex-chip rex-chip-ok">{focoArea}</span>
+            </div>
+          )}
         </div>
 
         <div className="rex-block rex-milestone">
           <div className="rex-lbl">Próximo hito · crítico</div>
           <div className="rex-title">{hitoTitle}</div>
-          <div className="rex-bar">
-            <div className="rex-bar-fill" style={{width: Math.round(hitoPct) + '%'}}/>
-          </div>
-          <div className="rex-meta">
-            <span className={'rex-chip ' + hitoChip}>{hitoArea}</span>
-            <span className="rex-pr"><strong>{Math.round(hitoPct)}%</strong> ejecutado</span>
-          </div>
+          {hitoPct != null && (
+            <div className="rex-bar">
+              <div className="rex-bar-fill" style={{width: Math.round(hitoPct) + '%'}}/>
+            </div>
+          )}
+          {(hitoArea || hitoPct != null) && (
+            <div className="rex-meta">
+              {hitoArea && <span className={'rex-chip ' + hitoChip}>{hitoArea}</span>}
+              {hitoPct != null && <span className="rex-pr"><strong>{Math.round(hitoPct)}%</strong> ejecutado</span>}
+            </div>
+          )}
         </div>
 
         <div className="rex-block rex-risk">
-          <div className="rex-lbl"><span className="rex-pulse"/> Riesgo abierto · 1</div>
+          <div className="rex-lbl"><span className="rex-pulse"/> Riesgo abierto</div>
           <div className="rex-title">{riesgoTitle}</div>
-          <div className="rex-meta">
-            <span className="rex-chip rex-chip-risk">{riesgoNivel}</span>
-            <span className="rex-pr">{riesgoEst}</span>
-          </div>
+          {(riesgoNivel || riesgoEst) && (
+            <div className="rex-meta">
+              {riesgoNivel && <span className="rex-chip rex-chip-risk">{riesgoNivel}</span>}
+              {riesgoEst && <span className="rex-pr">{riesgoEst}</span>}
+            </div>
+          )}
         </div>
 
         <button className="rex-foot" onClick={()=>window.__openProjects && window.__openProjects()}>
@@ -1027,17 +1206,23 @@ function Deploy({ branchId, onClose }){
   if(!b) return null;
   const areaData = useAreaData(branchId);
 
-  /* Pendientes: API si hay datos, fallback a constante BRANCHES */
+  /* Pendientes: API si hay datos; sin datos -> lista vacía (no fallback a constante BRANCHES) */
   const SLA_DOT = { green:'ok', yellow:'w', red:'c', skull:'c' };
   const todos = areaData?.pendientes?.length
     ? areaData.pendientes.map(p => [SLA_DOT[p.sla_color]||'', p.titulo, p.responsable||p.estado||'', p.dias??99])
-    : b.todos;
+    : [];
 
-  /* KPI: API si disponible, fallback a constante */
-  const kpiLabel  = areaData?.kpi_principal?.label  || b.kpi.label;
+  /* KPI: API si disponible. Sin valor real -> "—" (honesto), no la constante BRANCHES. */
+  const kpiLabel  = areaData?.kpi_principal?.label  || 'Indicador Principal';
   const kpiTarget = areaData?.kpi_principal?.period
     ? `${areaData.kpi_principal.period}${areaData.kpi_principal.target ? ' · Meta: ' + Number(areaData.kpi_principal.target).toLocaleString('es-CO') : ''}`
-    : b.kpi.target;
+    : 'Sin datos';
+  const kpiVal = areaData?.kpi_principal?.value != null ? areaData.kpi_principal.value : '—';
+
+  /* Métricas: API si hay datos, si no estado "sin datos" (no la constante BRANCHES). */
+  const metrics = areaData?.metrics?.length
+    ? areaData.metrics.map(m => [m.label, m.value, m.tone || ''])
+    : [];
 
   return (
     <div className="deploy">
@@ -1050,9 +1235,10 @@ function Deploy({ branchId, onClose }){
       </div>
 
       <div className="branch-hero">
-        <div className="bh-eye">KPI OPERATIVO CLAVE · PLACEHOLDER · EDITABLE POR GERENTE GENERAL</div>
+        <div className="bh-eye">DIRECCIÓN A CARGO</div>
+        <div className="bh-director">{b.director || '—'}</div>
         <div className="bh-row">
-          <div className="bh-val num-mono">{b.kpi.value}</div>
+          <div className="bh-val num-mono">{kpiVal}</div>
           <div className="bh-lbl">
             <strong>{kpiLabel}</strong>
             <span>{kpiTarget}</span>
@@ -1063,17 +1249,19 @@ function Deploy({ branchId, onClose }){
       <div className="deploy-grid">
         <div className="deploy-block">
           <h4>Indicadores <span className="tiny">ÚLTIMOS 30 DÍAS</span></h4>
-          {b.metrics.map((m,i)=>(
-            <div key={i} className="metric-row">
-              <span className="k">{m[0]}</span>
-              <span className={'v ' + (m[2]||'')}>{m[1]}</span>
-            </div>
-          ))}
+          {metrics.length
+            ? metrics.map((m,i)=>(
+                <div key={i} className="metric-row">
+                  <span className="k">{m[0]}</span>
+                  <span className={'v ' + (m[2]||'')}>{m[1]}</span>
+                </div>
+              ))
+            : <div className="metric-row" style={{color:'var(--mute)'}}><span className="k">sin datos</span></div>}
         </div>
         <div className="deploy-block">
           <h4>Pendientes <span className="tiny">EN CURSO</span></h4>
           <ul className="todo-list">
-            {todos.map((t,i)=>{
+            {todos.length ? todos.map((t,i)=>{
               const days = t[3] ?? 99;
               let urgClass = 'urg-green';
               let urgIcon = '●';
@@ -1095,8 +1283,9 @@ function Deploy({ branchId, onClose }){
                   </span>
                 </li>
               );
-            })}
+            }) : <div style={{padding:'16px 0', color:'var(--mute)', fontSize:13}}>Sin pendientes activos</div>}
           </ul>
+
         </div>
       </div>
     </div>
@@ -1209,7 +1398,7 @@ function AutomationProposal({ spec, onApprove }) {
   };
   const reject = () => setDecision('no');
 
-  const areaColor = {GCF:'#ffd666', GP:'#00ff41', GI:'#89b4fa', GA:'#cba6f7', Transversal:'#00d4aa'};
+  const areaColor = {DC:'#ffd666', DP:'#00ff41', DI:'#89b4fa', DA:'#cba6f7', Transversal:'#00d4aa'};
   const ac = areaColor[spec.area] || '#00ff41';
 
   return (
@@ -1290,10 +1479,10 @@ const SLASH_COMMANDS = [
   { cmd:'/caja',       desc:'Liquidez, runway y flujos próximos',                       fill:'/caja — Dame el estado de la liquidez: caja total, meses de runway y flujos próximos.' },
   { cmd:'/hitos',      desc:'Progreso hacia la Visión 2030',                            fill:'/hitos — ¿Cómo vamos con los hitos estratégicos hacia 2030? ¿Qué está bloqueado?' },
   { cmd:'/inbox',      desc:'Bandeja de entrada y pendientes de atención',              fill:'/inbox — ¿Qué hay en la bandeja que necesite mi atención hoy?' },
-  { cmd:'/area GCF',   desc:'Dirección Comercial y Financiera',                         fill:'/area GCF — Analiza el estado de la Dirección Comercial y Financiera.' },
-  { cmd:'/area GP',    desc:'Dirección de Proyectos',                                   fill:'/area GP — Analiza el estado de la Dirección de Proyectos.' },
-  { cmd:'/area GI',    desc:'Dirección de Investigación',                               fill:'/area GI — Analiza el estado de la Dirección de Investigación.' },
-  { cmd:'/area GA',    desc:'Dirección Audiovisual',                                    fill:'/area GA — Analiza el estado de la Dirección Audiovisual.' },
+  { cmd:'/area DC',    desc:'Dirección Comercial y Financiera',                         fill:'/area DC — Analiza el estado de la Dirección Comercial y Financiera.' },
+  { cmd:'/area DP',    desc:'Dirección de Proyectos',                                   fill:'/area DP — Analiza el estado de la Dirección de Proyectos.' },
+  { cmd:'/area DI',    desc:'Dirección de Investigación',                               fill:'/area DI — Analiza el estado de la Dirección de Investigación.' },
+  { cmd:'/area DA',    desc:'Dirección Audiovisual',                                    fill:'/area DA — Analiza el estado de la Dirección Audiovisual.' },
   { cmd:'/sinergias',  desc:'Cruces y oportunidades entre áreas',                       fill:'/sinergias — ¿Qué sinergias o cruces entre áreas debería aprovechar esta semana?' },
   { cmd:'/status',     desc:'Estado de los servicios del dashboard',                    fill:'/status — ¿Cómo están los servicios del Centro de Mando?' },
   // ─── Frameworks de Pensamiento ───
@@ -1747,9 +1936,17 @@ function ClawDrawer({ open, onClose }){
    ============================================================ */
 function Modal({ open, onClose, eye, title, children, wide }){
   useEffect(()=>{ const h = (e)=> open && e.key==='Escape' && onClose(); window.addEventListener('keydown',h); return ()=>window.removeEventListener('keydown',h); },[open,onClose]);
+  // change frontend-fluidity (GSAP): consistent gentle open for ALL six <Modal>-based modals. useLayoutEffect
+  // avoids a flash; __fx honors reduced-motion + cleans up. Rich modals animate their own content internally.
+  const boxRef = React.useRef(null);
+  React.useLayoutEffect(()=>{
+    if(!open || !window.__fx) return;
+    const c = window.__fx.modalIn(boxRef.current);
+    return ()=> c && c.revert();
+  },[open]);
   return (
     <div className={'modal-scrim ' + (open?'on':'')} onClick={onClose}>
-      <div className={'modal ' + (wide?'modal-wide':'')} onClick={e=>e.stopPropagation()}>
+      <div className={'modal ' + (wide?'modal-wide':'')} ref={boxRef} onClick={e=>e.stopPropagation()}>
         <div className="modal-hd">
           <div>
             <div className="eye">{eye}</div>
@@ -1763,21 +1960,45 @@ function Modal({ open, onClose, eye, title, children, wide }){
   );
 }
 
-/* Hoja de Ruta 2026 */
+/* Hoja de Ruta del año — los Q (metas trimestrales) salen de los PLANES por área
+   (change plan-quarterly-milestones; el trimestre vive en el plan, no en el hito).
+   Lee /roadmap/quarters anclado al CICLO ACTIVO (no al reloj del navegador). */
 function RoadmapContent(){
-  const rows = [
-    ['Q1','Consolidar alianza MinCultura','firma + plan de trabajo','80%'],
-    ['Q2','Lanzar Cumbre ACMI','piloto audiovisual + narrativa','60%'],
-    ['Q3','Abrir Laboratorio Risaralda','infraestructura + curaduría','15%'],
-    ['Q4','Memoria 2026 + Visión 2027','cierre editorial','0%'],
-  ];
+  const data = useApiData('quarters');
+  const anio = (data && data.anio) ? data.anio : (window.__CM_ROADMAP_ANIO__ || null);
+  const quarters = (data && data.quarters) ? data.quarters : null;
+  const total = data ? data.total : 0;
+
+  if (!quarters || !total) {
+    return (
+      <div className="roadmap">
+        <div className="rm-empty" style={{padding:'20px 8px', color:'var(--mute)', fontSize:13}}>
+          {anio
+            ? <>Sin metas trimestrales para <strong>{anio}</strong>. Defínelas por área en cada plan
+               (sus 4 trimestres) y la hoja de ruta se arma sola.</>
+            : <>Sin ciclo de planeación activo — <strong>sin datos</strong>.</>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="roadmap">
-      {rows.map((r,i)=>(
+      {quarters.map((q,i)=>(
         <div key={i} className="rm-row">
-          <span className="q">{r[0]} 2026</span>
-          <div className="body"><strong>{r[1]}</strong><span>{r[2]}</span></div>
-          <span className="prog tabular">{r[3]}</span>
+          <span className="q">Q{q.trimestre} {anio}</span>
+          <div className="body">
+            {q.items && q.items.length
+              ? q.items.map((it,j)=>(
+                  <div key={j}>
+                    <strong>{it.meta}</strong>
+                    <span className="prog tabular">{it.pct != null ? Math.round(it.pct)+'%' : 'sin datos'}</span>
+                    <span style={{color:'var(--mute)', fontSize:11, marginLeft:6}}>
+                      {it.area}{it.objetivo_medible ? ' · '+it.objetivo_medible : ''}
+                    </span>
+                  </div>
+                ))
+              : <span style={{color:'var(--mute)'}}>— sin metas este trimestre —</span>}
+          </div>
         </div>
       ))}
     </div>
@@ -1786,6 +2007,23 @@ function RoadmapContent(){
 
 /* Visión 2030 */
 function VisionContent(){
+  const milestones = useApiData('milestones');
+  const quartersData = useApiData('quarters');
+  const hasStrategy = (Array.isArray(milestones) && milestones.length > 0) || (quartersData && quartersData.total > 0);
+
+  if (!hasStrategy) {
+    return (
+      <div className="vision-block" style={{textAlign:'center', padding:'32px 16px', background:'var(--bg-card, #141414)', borderRadius:8, border:'1px solid var(--line, #2a2a2a)'}}>
+        <div className="quote" style={{fontStyle:'normal', color:'var(--mute, #888)', fontSize:14, lineHeight:1.5}}>
+          Sin visión ni estrategia cargada en el Centro de Mando.
+        </div>
+        <div className="cite" style={{marginTop:12, color:'var(--txt-dim, #aaa)', textTransform:'none', letterSpacing:'normal', fontSize:12}}>
+          Al eliminar la estrategia no existe una visión activa definida hacia 2030. Sube un nuevo documento estratégico desde «Subir recurso» para definir los nuevos pilares.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="vision-block">
@@ -1808,6 +2046,7 @@ function VisionContent(){
     </>
   );
 }
+
 
 /* Dimensión Estratégica — carga con modal de intención */
 const INTENTS = [
@@ -2106,39 +2345,53 @@ function PulsoDetail(){
   const [drillOpen, setDrillOpen] = React.useState(false);
   const pulsoData = useApiData('pulso');
 
-  const AREAS_META = [
-    { code:'GCF', name:'Dirección Comercial',    trend:'+3',
-      triggers:['feedback: 4.2/5','horas extra: 34h','disponibilidad: alta'],
-      note:'Equipo estable. Alta carga por cierre fiscal Q2.' },
-    { code:'GP',  name:'Dirección de Proyectos', trend:'-2',
-      triggers:['feedback: 3.6/5','horas extra: 54h ⚠','días libres: 8% ⚠'],
-      note:'Rutas Cafeteras 02 presiona. Considerar refuerzo.' },
-    { code:'GI',  name:'Dirección de Investigación', trend:'+5',
-      triggers:['feedback: 4.6/5','horas extra: 22h','disponibilidad: alta'],
-      note:'Campo productivo. Publicaciones al día.' },
-    { code:'GA',  name:'Dirección Audiovisual',  trend:'-1',
-      triggers:['feedback: 3.8/5','horas extra: 48h','rodaje día 3/5'],
-      note:'Piloto en rodaje día 3/5. Intensidad alta.' },
-  ];
-  const SCORES_FALLBACK = [78, 64, 82, 66];
-  const apiScores = pulsoData?.rows?.map(r => r.score);
-  const areas = AREAS_META.map((m, i) => {
-    const score = apiScores?.[i] ?? SCORES_FALLBACK[i];
-    return { ...m, score, flag: score >= 75 ? 'ok' : 'warn' };
+  // honest (Capa 2+3): el Pulso deriva del BACKLOG REAL de tareas por dirección — no hay check-in
+  // humano diario. Cada dirección muestra su score real + el DRIVER real (tareas abiertas / vencidas).
+  // Se eliminó el contexto inventado (trend +3/-2, feedback, horas extra) y los 7 días fingidos.
+  const NAME_BY_CODE = { DC:'Dirección Comercial', DP:'Dirección de Proyectos',
+                         DI:'Dirección de Investigación', DA:'Dirección Audiovisual' };
+  const areas = (pulsoData?.rows || []).map(r => {
+    const hasScore = r.score != null;
+    const score = hasScore ? r.score : null;
+    const driver = !hasScore ? 'sin datos'
+      : (r.overdue ? `${r.pendiente} abiertas · ${r.overdue} vencidas` : `${r.pendiente} tareas abiertas`);
+    // change rigorous-progress-math: RAG continuo (≥80 sano / 60-79 alerta / <60 crítico)
+    const flag = hasScore ? (score >= 80 ? 'ok' : score >= 60 ? 'mid' : 'crit') : 'crit';
+    return { code: r.code, name: NAME_BY_CODE[r.code] || r.area, score: hasScore ? score : '—',
+             hasScore, flag, driver, pendiente: r.pendiente || 0, overdue: r.overdue || 0,
+             onTimePct: r.onTimePct, backlogSev: r.backlogSev };
   });
 
-  const saludScore = pulsoData ? Math.round(pulsoData.salud_global) : Math.round(areas.reduce((s,a)=>s+a.score,0)/4);
-  const deltaVal   = pulsoData ? (pulsoData.delta ?? 0) : 4;
-  const deltaStr   = (deltaVal >= 0 ? '+' : '') + deltaVal + ' vs. semana pasada';
-  const prevScore  = saludScore - deltaVal;
+  const saludScore = pulsoData && pulsoData.salud_global != null ? Math.round(pulsoData.salud_global) : '—';
+  // change rigorous-progress-math: baseline equal-weight para mostrar la sensibilidad del size-weighting
+  const saludSimple = pulsoData && pulsoData.salud_global_simple != null ? Math.round(pulsoData.salud_global_simple) : null;
+  const criticas = areas.filter(a => a.hasScore && a.score < 60).length;
+  const vencidas = areas.reduce((s, a) => s + (a.overdue || 0), 0);
+  const lede = !areas.length
+    ? 'Aún no hay tareas cargadas para evaluar la carga por dirección.'
+    : criticas
+      ? <>{criticas} de {areas.length} direcciones en <strong>zona crítica</strong> por backlog vencido ({vencidas} tareas). Mide tareas abiertas/vencidas, no estado de ánimo.</>
+      : <>Carga operativa <strong>estable</strong> en las direcciones con datos.</>;
+  const peor = areas.filter(a => a.hasScore).slice().sort((a, b) => (b.overdue || 0) - (a.overdue || 0))[0];
 
   const LEVEL_COLORS = [
     null,
-    { label:'Crítico',  desc:'>50h extra · <10% días libres', color:'#ef4444' },
-    { label:'Fricción', desc:'Sobrecosto · caída de puntos',   color:'#f97316' },
-    { label:'Estable',  desc:'Operación normal · ≤40h extra',  color:'#86efac' },
-    { label:'Óptimo',   desc:'Feedback >4.5 · 0h extra',       color:'#00FF41' },
+    { label:'Crítico',  desc:'backlog vencido alto',    color:'#ef4444' },
+    { label:'Fricción', desc:'pendientes acumulándose', color:'#f97316' },
+    { label:'Estable',  desc:'operación normal',        color:'#86efac' },
+    { label:'Óptimo',   desc:'al día · sin vencidas',   color:'#00FF41' },
   ];
+
+  // Fórmula global rediseñada: las 3 señales del índice compuesto (peso = exponente de la media
+  // geométrica) + RAG para colorear salud real. La identidad de la marca: verde para sano.
+  const SIGNALS = [
+    { key:'atraso',      name:'Atraso',      w:50, desc:'backlog vencido, ponderado por antigüedad' },
+    { key:'puntualidad', name:'Puntualidad', w:30, desc:'% histórico de entregas a tiempo' },
+    { key:'flujo',       name:'Flujo',       w:20, desc:'trabajo sin bloqueos' },
+  ];
+  const RAG_HEX = { ok:'#00FF41', mid:'#E8A02C', warn:'#f97316', crit:'#ef4444' };
+  const gNum  = typeof saludScore === 'number' ? saludScore : null;
+  const gFlag = gNum == null ? 'mid' : gNum >= 80 ? 'ok' : gNum >= 60 ? 'mid' : 'crit';
 
   return (
     <div className="kd">
@@ -2147,33 +2400,33 @@ function PulsoDetail(){
         <PulsoViz rows={pulsoData?.rows}/>
         <div className="kd-hero-side">
           <div className="kd-big"><span className="n num-mono">{saludScore}</span><span className="u">/100</span></div>
-          <div className={'kd-delta ' + (deltaVal >= 0 ? 'up' : 'dn')}>▲ {deltaStr}</div>
-          <p className="kd-lede">La organización está <strong>en forma</strong>. 3 de 4 áreas en verde. El cuidado está en Proyectos y Audiovisual, donde la intensidad de rodaje eleva la carga.</p>
-          <span className="kd-hero-hint">Clic para ver fórmula y análisis completo →</span>
+          <p className="kd-lede">{lede}</p>
+          <span className="kd-hero-hint">Clic para ver fórmula y desglose por dirección →</span>
         </div>
       </button>
 
-      <div className="kd-sec-head">ÁREAS · DESGLOSE</div>
+      <div className="kd-sec-head">DIRECCIONES · CARGA OPERATIVA</div>
       <div className="kd-areas">
-        {areas.map(a=>(
+        {areas.length ? areas.map(a=>(
           <div key={a.code} className={'kd-area f-'+a.flag}>
             <span className="kd-code num-mono">{a.code}</span>
             <div className="kd-a-body">
               <strong>{a.name}</strong>
-              <span>{a.note}</span>
+              <span>{a.driver}</span>
             </div>
             <div className="kd-a-score">
               <span className="n num-mono">{a.score}</span>
-              <span className={'t ' + (a.trend.startsWith('+')?'up':'down')}>{a.trend}</span>
             </div>
           </div>
-        ))}
+        )) : <div style={{color:'var(--mute)', padding:'8px 2px'}}>sin datos de tareas</div>}
       </div>
 
-      <div className="kd-action">
-        <strong>Recomendación <span className="gentil-brand-name">Gentil</span></strong>
-        <p>Agendar conversación 1:1 con líder de Proyectos esta semana. La caída de 2 puntos + carga de Rutas Cafeteras 02 justifica una intervención cultural temprana, antes de que afecte la entrega del piloto.</p>
-      </div>
+      {peor && peor.overdue > 0 && (
+        <div className="kd-action">
+          <strong>Lectura del dato</strong>
+          <p>{peor.name} concentra el mayor backlog vencido ({peor.overdue} tareas). El rojo viene del backlog histórico sin reconciliar, no de sobrecarga del equipo — la acción real es depurar/cerrar esas tareas (o reconciliarlas con Google Tasks).</p>
+        </div>
+      )}
 
       {/* Drill-down: fórmula + heatmap completo + leyenda */}
       {drillOpen && (
@@ -2187,45 +2440,79 @@ function PulsoDetail(){
               <button className="pulso-drill-close" onClick={()=>setDrillOpen(false)}>×</button>
             </div>
 
-            {/* Fórmula */}
+            {/* Fórmula global — índice compuesto (OECD/JRC) rediseñado como receta + cómputo visual */}
             <div className="pulso-formula">
-              <div className="pf-eye">SALUD = Σ(S_GCF + S_GP + S_GI + S_GA) / 4</div>
-              <div className="pf-row">
-                {areas.map(a=>(
-                  <div key={a.code} className="pf-term">
-                    <span className={'pf-val num-mono f-'+a.flag}>{a.score}</span>
-                    <span className="pf-code">{a.code}</span>
+              <div className="pf-eye">Índice compuesto · media geométrica ponderada · escala 0–100</div>
+
+              {/* Nivel 1 — las 3 señales = la fórmula, como receta ponderada (el peso es el exponente) */}
+              <div className="pf-signals">
+                {SIGNALS.map(s => (
+                  <div key={s.key} className="pf-sig">
+                    <div className="pf-sig-hd">
+                      <span className="pf-sig-name">{s.name}</span>
+                      <span className="pf-sig-w num-mono">{s.w}%</span>
+                    </div>
+                    <div className="pf-sig-track"><i className={'pf-sig-fill s-'+s.key} style={{width:s.w+'%'}}/></div>
+                    <div className="pf-sig-desc">{s.desc}</div>
                   </div>
                 ))}
-                <div className="pf-eq">÷ 4</div>
-                <div className="pf-result">
-                  <span className="pf-r num-mono">{saludScore}</span>
-                  <span className={'pf-delta ' + (deltaVal >= 0 ? 'up' : 'dn')}>▲ {(deltaVal >= 0 ? '+' : '') + deltaVal} vs. {prevScore}</span>
+              </div>
+              {/* Nivel 2 — cómputo: por dirección → ponderado por carga → global (gauge) */}
+              <div className="pf-compute">
+                <div className="pf-dirs">
+                  <div className="pf-dirs-lbl">Salud por dirección</div>
+                  <div className="pf-dirs-grid">
+                    {areas.map(a => (
+                      <div key={a.code} className="pf-dir">
+                        <div className="pf-dir-hd">
+                          <span className="pf-dir-code">{a.code}</span>
+                          <span className={'pf-dir-val num-mono f-'+a.flag}>{a.score}</span>
+                        </div>
+                        <div className="pf-dir-track">
+                          <i style={{width:(typeof a.score==='number'?a.score:0)+'%', background:RAG_HEX[a.flag]}}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="pf-link"><span>ponderado</span><span>por carga</span><b>→</b></div>
+                <div className="pf-global">
+                  <div className="pf-ring" style={{'--p': (gNum || 0), '--c': RAG_HEX[gFlag]}}>
+                    <span className={'pf-ring-val num-mono f-'+gFlag}>{saludScore}</span>
+                  </div>
+                  <span className="pf-global-lbl">Global · 0–100</span>
                 </div>
               </div>
+
+              {saludSimple != null && (
+                <div className="pf-foot">
+                  <strong className="num-mono">{saludScore}</strong> ponderado por carga ·
+                  <strong className="num-mono"> {saludSimple}</strong> promedio simple
+                  {saludScore !== saludSimple
+                    ? ' — la brecha es el peso de las direcciones con más trabajo'
+                    : ' — coinciden: la carga está pareja entre direcciones'}
+                </div>
+              )}
             </div>
 
-            {/* Heatmap completo */}
-            <div className="kd-sec-head">MAPA DE CALOR · SEMANA ACTUAL</div>
+            {/* Carga por dirección (backlog real, no días fingidos) */}
+            <div className="kd-sec-head">CARGA POR DIRECCIÓN · ATRASO · PUNTUALIDAD</div>
             <div className="pulso-full-heat">
-              <div className="pfh-days">
-                <span className="pfh-axis"></span>
-                {['LUN','MAR','MIÉ','JUE','VIE','SÁB','DOM'].map(d=>(
-                  <span key={d} className="pfh-day">{d}</span>
-                ))}
-                <span className="pfh-score-h">S</span>
-              </div>
-              {PULSO_ROWS.map(r=>(
-                <div key={r.area} className="pfh-row">
-                  <span className="pfh-label">{r.area}</span>
-                  {r.values.map((v,i)=>(
-                    <div key={i} className={'pfh-cell v'+v} title={LEVEL_COLORS[v]?.label||''}/>
-                  ))}
+              {areas.length ? areas.map(a=>(
+                <div key={a.code} className="pfh-row">
+                  <span className="pfh-label">{a.code} · {a.name}</span>
+                  <span className="pfh-driver">
+                    {a.driver}
+                    {a.hasScore && a.onTimePct != null ? ` · ${a.onTimePct}% a tiempo` : ''}
+                    {a.hasScore && a.backlogSev ? ` · ${a.backlogSev}% backlog añejo` : ''}
+                  </span>
                   <div className="pfh-score">
-                    <span className={'pfh-s num-mono f-'+(r.score>=75?'ok':'warn')}>{r.score}</span>
+                    <span className={'pfh-s num-mono f-'+a.flag}>{a.score}</span>
                   </div>
                 </div>
-              ))}
+              )) : (
+                <div className="pfh-row" style={{color:'var(--mute)', padding:'8px 0'}}>sin datos</div>
+              )}
             </div>
 
             {/* Leyenda */}
@@ -2239,26 +2526,17 @@ function PulsoDetail(){
               ))}
             </div>
 
-            {/* Variables de entrada */}
-            <div className="kd-sec-head">VARIABLES DE ENTRADA · MANUALES DE FUNCIONES</div>
-            <div className="kd-areas">
-              {areas.map(a=>(
-                <div key={a.code} className={'kd-area f-'+a.flag}>
-                  <span className="kd-code num-mono">{a.code}</span>
-                  <div className="kd-a-body">
-                    <strong>{a.name}</strong>
-                    <span>{a.note}</span>
-                    <div className="kd-triggers">
-                      {a.triggers.map((t,i)=><span key={i} className="kd-trigger">{t}</span>)}
-                    </div>
-                  </div>
-                  <div className="kd-a-score">
-                    <span className="n num-mono">{a.score}</span>
-                    <span className={'t '+(a.trend.startsWith('+')?'up':'down')}>{a.trend}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {/* De dónde sale el dato (honesto) */}
+            <div className="kd-sec-head">DE DÓNDE SALE EL DATO</div>
+            <p className="kd-source-note">
+              El score de cada dirección es un <strong>índice compuesto continuo (0–100)</strong> que
+              combina tres señales con media geométrica (estándar OECD/JRC, para que un eje pésimo no se
+              esconda tras uno bueno): <strong>atraso</strong> del backlog (50%, ponderado por antigüedad),
+              <strong> puntualidad</strong> histórica de entrega (30%) y <strong>flujo</strong> sin bloqueos
+              (20%). Cada tarea pesa por su importancia (<em>es_hito × prioridad</em>): una tarea de hito
+              vencida pesa más que un recado. El global pondera por la carga real de cada dirección, no es
+              un promedio simple. No mide horas extra ni feedback (no hay esa fuente todavía).
+            </p>
           </div>
         </div>
       )}
@@ -2269,80 +2547,158 @@ function PulsoDetail(){
 function VisionDetail(){
   const [drillOpen, setDrillOpen] = React.useState(false);
   const apiArcs = useApiData('arcs');
+  // change populate-hito-rollup: the Vision modal now reads REAL hitos (roadmap_milestones) + their
+  // DERIVED roll-up %, not the old hardcoded "4 pilares" demo. Empty -> "sin datos", never fabricated.
+  const hitos = useApiData('milestones') || [];
 
-  const getArcVal = (label, fallback) => {
-    if (!apiArcs) return fallback;
-    const a = apiArcs.find(x => x.label === label);
-    return a != null ? Math.round(a.value) : fallback;
+  const ESTADO_LABEL = { done:'completado', in_progress:'en progreso', delayed:'retrasado', pendiente:'pendiente', pending:'pendiente' };
+  const hitoColor = (pct) => (pct||0) >= 100 ? '#00FF41' : (pct||0) > 0 ? '#0E0E0E' : 'var(--line)';
+
+  const withPct = hitos.filter(h => h.pct != null);
+  // change rigorous-progress-math: el número global es el roll-up PONDERADO por peso (EVM, del backend),
+  // no el promedio simple de las barras. Así el modal coincide con la tarjeta del panel. Fallback al
+  // promedio simple solo si no llegó el arco.
+  const v2030arc = apiArcs ? apiArcs.find(a => a.label === 'EJE ESTRAT.') : null;
+  const vGlobal = (v2030arc && v2030arc.value != null) ? Math.round(v2030arc.value)
+                  : (withPct.length ? Math.round(withPct.reduce((s,h)=>s+(h.pct||0),0) / withPct.length) : null);
+  const enProgreso = hitos.filter(h => (h.pct||0) > 0).length;
+  const sinRespaldoN = hitos.filter(h => h.sinRespaldo).length;  // 'terminado' sin tareas que lo respalden
+  const tareasVinc = hitos.reduce((s,h)=>s+(h.tareasTotal||0), 0);  // tareas reales vinculadas a algún hito
+
+  // change rigorous-progress-math: el CEO asigna el TIER estratégico de cada hito (Normal 1 / Alto 2 /
+  // Crítico 3). PATCH peso -> refresca; el roll-up ponderado Σ(peso·avance)/Σpeso reacciona al instante.
+  const TIERS = [{ k:'Normal', w:1 }, { k:'Alto', w:2 }, { k:'Crítico', w:3 }];
+  const tierOf = (peso) => ((peso||1) >= 3 ? 'Crítico' : (peso||1) >= 2 ? 'Alto' : 'Normal');
+  const [tierBusy, setTierBusy] = React.useState(null);
+  const setTier = async (id, w) => {
+    setTierBusy(id);
+    try {
+      const b = (window.__API_BASE__ || '').replace(/\/$/, '');
+      const k = await (window.__CM_KEY_READY__ || Promise.resolve(window.__API_KEY__ || ''));
+      await fetch(`${b}/roadmap/milestones/${id}`, { method:'PATCH',
+        headers:{ 'Content-Type':'application/json', ...(k ? { 'X-API-Key':k } : {}) },
+        body: JSON.stringify({ peso: w }) });
+      if (window.__CM_REFRESH__) await window.__CM_REFRESH__();
+    } catch(e) { /* noop: el tier no se aplicó, el número no cambia */ }
+    setTierBusy(null);
   };
 
-  const pillars = [
-    { code:'EJE ESTRAT.', value: getArcVal('EJE ESTRAT.', 58), color:'#0E0E0E', note:'Consolidar Eje Cafetero como destino fílmico.', sub:'6 hitos de 12 · 2 en riesgo · 4 completos', hitos:[{t:'Identidad de marca',done:true},{t:'Red aliados Q1',done:true},{t:'Piloto «Eje»',done:true},{t:'Lab Risaralda',done:false},{t:'Cumbre ACMI',done:false},{t:'Escala nacional',done:false}] },
-    { code:'CAPTACIÓN',   value: getArcVal('CAPTACIÓN', 65),   color:'#00FF41', note:'Diversificar fuentes de financiación.', sub:'Adelantados 7% vs. plan · FDC 2026 pendiente', hitos:[{t:'FDC Q1',done:true},{t:'MinCultura Q1',done:true},{t:'Privados',done:false},{t:'FDC Q2',done:false}] },
-    { code:'ENTREGAS',    value: getArcVal('ENTREGAS', 78),    color:'#0E0E0E', note:'Ratio proyectos on-time sobre comprometido.', sub:'7 de 9 on-time · 2 reprogramados a Q3', hitos:[{t:'Rutas 01',done:true},{t:'Piloto OK',done:true},{t:'Lab Risaralda',done:false}] },
-    { code:'RIESGO',      value: getArcVal('RIESGO', 22),      color:'#E8A02C', note:'Índice exposición: meta mantener < 30%.', sub:'Zona sana · en control', hitos:[{t:'MinCultura',done:true},{t:'Diversif. finanzas',done:false}] },
-  ];
-  const v2030 = getArcVal('EJE ESTRAT.', 58);
+  // change connect-execution-strategy: Gentil propone qué tarea real avanza cada hito; al vincularlas, su
+  // avance sube con el trabajo real de los directores. POST -> refresca los hitos sin recargar.
+  const [linking, setLinking] = React.useState(false);
+  const [linkMsg, setLinkMsg] = React.useState(null);
+  const vincularTareas = async () => {
+    setLinking(true); setLinkMsg(null);
+    try {
+      const b = (window.__API_BASE__ || '').replace(/\/$/, '');
+      const k = await (window.__CM_KEY_READY__ || Promise.resolve(window.__API_KEY__ || ''));
+      const res = await fetch(`${b}/tasks/link-hitos`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(k ? { 'X-API-Key': k } : {}) } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      setLinkMsg(data.mensaje || `${data.linked || 0} tareas vinculadas`);
+      if (window.__CM_REFRESH__) await window.__CM_REFRESH__();
+    } catch (e) {
+      setLinkMsg('No se pudo vincular: ' + (e.message || e));
+    } finally { setLinking(false); }
+  };
+
+  // change populate-hito-rollup (GSAP): tasteful, accessible entrance for the real hitos. useLayoutEffect
+  // avoids a flash; gsap.matchMedia honors prefers-reduced-motion; mm.revert() cleans up (per gsap-react).
+  const rootRef = React.useRef(null);
+  const drillRef = React.useRef(null);
+
+  React.useLayoutEffect(() => {
+    if (typeof gsap === 'undefined' || !rootRef.current || hitos.length === 0) return;
+    const mm = gsap.matchMedia();
+    mm.add({ reduce: '(prefers-reduced-motion: reduce)' }, (ctx) => {
+      if (ctx.conditions.reduce) return;            // accessibility: no entrance motion when reduced
+      gsap.from('.vd-hito-card', { autoAlpha: 0, y: 12, duration: 0.4, ease: 'power2.out', stagger: { each: 0.035 } });
+      gsap.from('.vd-hito-fill', { scaleX: 0, transformOrigin: 'left center', duration: 0.6, ease: 'power2.out', stagger: 0.035, delay: 0.08 });
+    }, rootRef);
+    return () => mm.revert();
+  }, [hitos.length]);
+
+  React.useLayoutEffect(() => {
+    if (!drillOpen || typeof gsap === 'undefined' || !drillRef.current) return;
+    const mm = gsap.matchMedia();
+    mm.add({ reduce: '(prefers-reduced-motion: reduce)' }, (ctx) => {
+      if (ctx.conditions.reduce) return;
+      gsap.from(drillRef.current, { autoAlpha: 0, scale: 0.97, y: 10, duration: 0.32, ease: 'power2.out' });
+      gsap.from('.vd-drill-card', { autoAlpha: 0, y: 14, duration: 0.4, ease: 'power2.out', stagger: { each: 0.03 }, delay: 0.05 });
+    }, drillRef);
+    return () => mm.revert();
+  }, [drillOpen]);
 
   return (
-    <div className="kd">
+    <div className="kd" ref={rootRef}>
       <button className="kd-hero kd-hero-btn" onClick={()=>setDrillOpen(true)}>
         <RadialViz size={210} arcs={apiArcs}/>
         <div className="kd-hero-side">
-          <div className="kd-big"><span className="n num-mono">{v2030}</span><span className="u">%</span></div>
-          <div className="kd-delta up">▲ +6 vs. Q1</div>
-          <p className="kd-lede">Vamos <strong>algo más que a medio camino</strong> hacia la visión 2030. Captación adelantada, ejecución al ritmo esperado.</p>
-          <span className="kd-hero-hint">Clic para ver pilares y hitos →</span>
+          <div className="kd-big"><span className="n num-mono">{vGlobal != null ? vGlobal : '—'}</span><span className="u">%</span></div>
+          <p className="kd-lede">Avance de los <strong>{hitos.length} hitos</strong> hacia la visión 2030 <strong>según su estado declarado</strong>.</p>
+          {/* change relabel-avance-2030 (AUD-024): be explicit that the % is declared status, not executed work. */}
+          <p className="kd-lede" style={{color:'var(--mute)', fontSize:'.85em', marginTop:'.3rem'}}>Mide el estado declarado de los hitos, no el trabajo ejecutado.{sinRespaldoN>0 ? ` ${sinRespaldoN} marcado(s) sin respaldo de tareas.` : ''}</p>
+          <span className="kd-hero-hint">Clic para ver los hitos y su avance →</span>
         </div>
       </button>
-      <div className="kd-sec-head">PILARES · 4 DIMENSIONES</div>
+      <div className="kd-sec-head">HITOS HACIA 2030 · {hitos.length}</div>
       <div className="kd-pillars">
-        {pillars.map(p=>(
-          <div key={p.code} className="kd-pillar">
+        {hitos.length === 0 && <span className="kd-p-code num-mono">sin datos de hitos</span>}
+        {hitos.map(h=>(
+          <div key={h.id} className="kd-pillar vd-hito-card">
             <div className="kd-p-head">
-              <span className="kd-p-code num-mono">{p.code}</span>
-              <span className="kd-p-val num-mono">{p.value}%</span>
+              <span className="kd-p-code num-mono">{ESTADO_LABEL[h.estado] || h.estado || ''}</span>
+              <span className="kd-p-val num-mono">{h.pct != null ? Math.round(h.pct)+'%' : 'sin datos'}</span>
             </div>
-            <div className="kd-p-track"><div className="kd-p-fill" style={{width:p.value+'%'}}/></div>
-            <strong>{p.note}</strong>
-            <span>{p.sub}</span>
+            <div className="kd-p-track"><div className="kd-p-fill vd-hito-fill" style={{width:(h.pct!=null?h.pct:0)+'%'}}/></div>
+            <strong>{h.t}</strong>
+            {h.tareasTotal > 0 && <span className="vd-tasks">{h.tareasDone}/{h.tareasTotal} tareas reales hechas</span>}
+            {h.sinRespaldo && <span className="vd-flag">verificar respaldo</span>}
+            <div className="vd-tier" title="Peso estratégico hacia 2030 (Crítico cuenta más en el avance)">
+              {TIERS.map(t=>(
+                <button key={t.k}
+                  className={'vd-tier-btn'+(tierOf(h.peso)===t.k?' on tier-'+t.k.toLowerCase():'')}
+                  disabled={tierBusy===h.id}
+                  onClick={()=>setTier(h.id, t.w)}>{t.k}</button>
+              ))}
+            </div>
           </div>
         ))}
       </div>
       <div className="kd-action">
-        <strong>Lectura para el CEO</strong>
-        <p>El foco ahora es <strong>consolidar el Eje Cafetero</strong>: 2 hitos del pilar estratégico en riesgo. Gentil sugiere revisar con Proyectos antes de fin de mes.</p>
+        <strong>Avance hacia 2030</strong>
+        <p>{hitos.length} hitos · avance promedio <strong>{vGlobal != null ? vGlobal+'%' : '—'}</strong>. Cada hito cuenta coherente con su estado: <strong>terminado = 100%</strong>, <strong>pendiente = 0%</strong>, en progreso = avance real de las tareas vinculadas — un solo número, sin pelear con el radial.{sinRespaldoN > 0 ? <> {sinRespaldoN} {sinRespaldoN === 1 ? 'hito terminado no tiene' : 'hitos terminados no tienen'} ninguna tarea que lo respalde (<strong>verificar respaldo</strong>).</> : null} {tareasVinc > 0 ? <><strong>{tareasVinc}</strong> tareas reales vinculadas a hitos.</> : <>Aún no hay tareas reales vinculadas a hitos.</>}</p>
+        <div className="vd-link-row">
+          <button className="vd-link-btn" onClick={vincularTareas} disabled={linking}>
+            {linking ? 'Vinculando con Gentil…' : 'Vincular tareas reales a hitos (Gentil)'}
+          </button>
+          {linkMsg && <span className="vd-link-msg">{linkMsg}</span>}
+        </div>
       </div>
 
       {drillOpen && (
         <div className="pulso-drill-scrim" onClick={()=>setDrillOpen(false)}>
-          <div className="pulso-drill-box" onClick={e=>e.stopPropagation()}>
+          <div className="pulso-drill-box" ref={drillRef} onClick={e=>e.stopPropagation()}>
             <div className="pulso-drill-hd">
               <div>
                 <div className="pf-eye">ANÁLISIS PROFUNDO · EJECUCIÓN ESTRATÉGICA 2030</div>
-                <h2 className="pulso-drill-title">Pilares · <em>Hitos y avance</em></h2>
+                <h2 className="pulso-drill-title">Hitos · <em>avance real</em></h2>
               </div>
               <button className="pulso-drill-close" onClick={()=>setDrillOpen(false)}>×</button>
             </div>
             <div style={{padding:'24px 28px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:16}}>
-              {pillars.map(p=>(
-                <div key={p.code} style={{padding:18, background:'var(--bg)', border:'1px solid var(--line)', borderRadius:'var(--r-md)', borderLeft:`4px solid ${p.color}`}}>
-                  <div style={{display:'flex', justifyContent:'space-between', marginBottom:8}}>
-                    <span style={{fontFamily:'var(--f-title)', fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'.04em', color:'var(--ink)'}}>{p.code}</span>
-                    <span style={{fontFamily:'var(--f-num)', fontSize:18, fontWeight:700, color:'var(--ink)'}}>{p.value}%</span>
+              {hitos.length === 0 && <p style={{fontFamily:'var(--f-body)', color:'var(--mute)'}}>sin datos de hitos</p>}
+              {hitos.map(h=>(
+                <div key={h.id} className="vd-drill-card" style={{padding:18, background:'var(--bg)', border:'1px solid var(--line)', borderRadius:'var(--r-md)', borderLeft:`4px solid ${hitoColor(h.pct)}`}}>
+                  <div style={{display:'flex', justifyContent:'space-between', marginBottom:8, gap:12}}>
+                    <span style={{fontFamily:'var(--f-title)', fontSize:13, fontWeight:700, color:'var(--ink)'}}>{h.t}</span>
+                    <span style={{fontFamily:'var(--f-num)', fontSize:18, fontWeight:700, color:'var(--ink)', whiteSpace:'nowrap'}}>{h.pct != null ? Math.round(h.pct)+'%' : 'sin datos'}</span>
                   </div>
                   <div style={{height:4, background:'var(--line)', borderRadius:2, marginBottom:10}}>
-                    <div style={{height:'100%', width:p.value+'%', background:p.color, borderRadius:2}}/>
+                    <div style={{height:'100%', width:(h.pct!=null?h.pct:0)+'%', background:hitoColor(h.pct), borderRadius:2}}/>
                   </div>
-                  <p style={{fontFamily:'var(--f-body)', fontSize:12, color:'var(--mute)', margin:'0 0 10px', lineHeight:1.4}}>{p.note}</p>
-                  <ul style={{listStyle:'none', padding:0, margin:0, display:'flex', flexDirection:'column', gap:5}}>
-                    {p.hitos.map((h,i)=>(
-                      <li key={i} style={{display:'flex', alignItems:'center', gap:8, fontFamily:'var(--f-body)', fontSize:12, color:h.done?'var(--mute)':'var(--ink)', textDecoration:h.done?'line-through':'none'}}>
-                        <span style={{width:16, height:16, borderRadius:4, background:h.done?'#00FF41':'var(--line)', display:'grid', placeItems:'center', fontSize:10, fontWeight:700, color:'#001', flexShrink:0}}>{h.done?'✓':'○'}</span>
-                        {h.t}
-                      </li>
-                    ))}
-                  </ul>
+                  <p style={{fontFamily:'var(--f-body)', fontSize:12, color:'var(--ink-3)', margin:0}}>{ESTADO_LABEL[h.estado] || h.estado || ''}{h.sinRespaldo && <span className="vd-flag" style={{marginLeft:8}}>verificar respaldo</span>}</p>
                 </div>
               ))}
             </div>
@@ -2358,16 +2714,13 @@ function CajaDetail(){
   const [selMonth, setSelMonth] = React.useState(null);
   const cajaData = useApiData('caja');
 
+  // honest: panel financiero solo con datos reales. Sin cajaData -> "sin datos financieros".
   const latest = cajaData?.latest;
   const sources = latest ? [
     ['Caja operativa',         latest.caja    + 'M', 'ok'],
     ['Reservas estratégicas',  latest.reservas + 'M', 'ok'],
     ['Línea de crédito disp.', latest.credito  + 'M', 'ok'],
-  ] : [
-    ['Caja operativa',        '6.2M', 'ok'],
-    ['Reservas estratégicas', '2.1M', 'ok'],
-    ['Línea de crédito disp.','0.9M', 'ok'],
-  ];
+  ] : [];
 
   const flows = cajaData?.flows || [];
   const risks = flows.length ? flows.map(f => [
@@ -2375,62 +2728,76 @@ function CajaDetail(){
     (f.monto >= 0 ? '+' : '') + (f.monto/1000000).toFixed(1) + 'M',
     f.frecuencia || (f.horizonte_dias ? f.horizonte_dias + 'd' : ''),
     f.monto >= 0 ? 'ok' : 'warn',
-  ]) : [
-    ['Cobro pendiente FDC',    '42M',   '60d',    'ok'],
-    ['Pago nómina + impuestos','-3.1M', 'mensual','warn'],
-    ['Rodaje Piloto (fase 3)', '-1.8M', '60d',    'warn'],
-  ];
+  ]) : [];
 
-  const MONTHS_FALLBACK = [
-    {m:'May-25',v:6.4},{m:'Jun',v:6.1},{m:'Jul',v:5.8},{m:'Ago',v:6.2},{m:'Sep',v:6.9},{m:'Oct',v:7.4},
-    {m:'Nov',v:7.8},{m:'Dic',v:8.1},{m:'Ene-26',v:8.4},{m:'Feb',v:8.7},{m:'Mar',v:9.0},{m:'Abr',v:9.2},
-  ];
-  const months = cajaData?.months?.length >= 2
-    ? cajaData.months.map(([m, v]) => ({ m, v }))
-    : MONTHS_FALLBACK;
+  // change caja-fluidity: usa el detalle real (composición + Δ mes a mes) cuando está; fallback al simple
+  const months = cajaData?.monthsDetail?.length >= 2
+    ? cajaData.monthsDetail
+    : (cajaData?.months?.length >= 2 ? cajaData.months.map(([m, v]) => ({ m, v })) : []);
 
-  const cajaTotal = latest?.total ?? 9.2;
-  const cajaMeses = latest?.meses ?? 9;
-  const maxV = Math.max(...months.map(m=>m.v));
+  const cajaTotal = latest?.total != null ? latest.total : '—';
+  // change rigorous-progress-math: cash runway (caja+reservas) es el número honesto; funded suma crédito
+  const cashRunway   = latest?.cashRunway != null ? latest.cashRunway : null;
+  const fundedRunway = latest?.fundedRunway != null ? latest.fundedRunway : null;
+  const cajaMeses = cashRunway != null ? cashRunway : (latest?.meses != null ? latest.meses : null);
+  const hasCaja = !!latest;
+  const maxV = months.length ? Math.max(...months.map(m=>m.v)) : 0;
+  // change real-financial-source: escala dinámica (el banco real pica a ~24M en feb, ya no cabe en 0-12M)
+  // + doc fuente real (MOVIMIENTOS 2026) para Ver / Descargar.
+  const scaleMax = maxV > 0 ? maxV : 12;
+  const source = cajaData?.source || null;
   return (
     <div className="kd">
       <button className="kd-hero kd-hero-btn" onClick={()=>setDrillOpen(true)}>
         <div className="kd-caja-chart">
           <CajaViz months={cajaData?.months}/>
           <div className="kd-caja-scale">
-            <span>12M</span><span>9M</span><span>6M</span><span>3M</span><span>0</span>
+            {[1, .75, .5, .25, 0].map((f,i)=>(
+              <span key={i}>{f===0 ? '0' : (+(scaleMax*f).toFixed(1))+'M'}</span>
+            ))}
           </div>
         </div>
         <div className="kd-hero-side">
           <div className="kd-big"><span className="n num-mono">{cajaTotal}</span><span className="u">M COP</span></div>
-          <div className="kd-delta up">▲ +0.8M vs. mes pasado</div>
-          <p className="kd-lede">Tenemos <strong>{cajaMeses} meses de respiración</strong> al ritmo actual. Tendencia al alza desde julio.</p>
+          {hasCaja
+            ? <p className="kd-lede">{cashRunway != null
+                ? <>Tenemos <strong>{cashRunway} meses de caja pura</strong> (caja + reservas){fundedRunway != null && fundedRunway !== cashRunway ? <> · {fundedRunway} con la línea de crédito</> : ''}. El crédito es colchón, no caja.</>
+                : (cajaMeses != null ? <>Tenemos <strong>{cajaMeses} meses de respiración</strong> al ritmo actual.</> : 'Liquidez operativa actual.')}</p>
+            : <p className="kd-lede" style={{color:'var(--mute)'}}>Sin datos financieros.</p>}
+          {/* change caja-freshness-honesty (AUD-039): as-of date + staleness in the detail too. */}
+          {latest?.asOf && <p className="kd-lede" style={{color:'var(--mute)', fontSize:'.85em', marginTop:'.25rem'}}>Datos al {latest.asOf}{latest.stale ? ' · ⚠ desactualizado' : ''}.</p>}
           <span className="kd-hero-hint">Clic para ver flujos y proyección →</span>
         </div>
       </button>
       <div className="kd-sec-head">FUENTES DE LIQUIDEZ</div>
       <div className="kd-sources">
-        {sources.map(([l,v,f],i)=>(
-          <div key={i} className={'kd-src f-'+f}>
-            <span className="l">{l}</span>
-            <span className="v num-mono">{v}</span>
-          </div>
-        ))}
+        {sources.length
+          ? sources.map(([l,v,f],i)=>(
+              <div key={i} className={'kd-src f-'+f}>
+                <span className="l">{l}</span>
+                <span className="v num-mono">{v}</span>
+              </div>
+            ))
+          : <div className="kd-src" style={{color:'var(--mute)'}}><span className="l">sin datos financieros</span></div>}
       </div>
       <div className="kd-sec-head">FLUJOS PRÓXIMOS 90 DÍAS</div>
       <div className="kd-risks">
-        {risks.map(([l,v,t,f],i)=>(
-          <div key={i} className={'kd-risk f-'+f}>
-            <span className="l">{l}</span>
-            <span className="t">{t}</span>
-            <span className="v num-mono">{v}</span>
-          </div>
-        ))}
+        {risks.length
+          ? risks.map(([l,v,t,f],i)=>(
+              <div key={i} className={'kd-risk f-'+f}>
+                <span className="l">{l}</span>
+                <span className="t">{t}</span>
+                <span className="v num-mono">{v}</span>
+              </div>
+            ))
+          : <div className="kd-risk" style={{color:'var(--mute)'}}><span className="l">sin flujos registrados</span></div>}
       </div>
-      <div className="kd-action">
-        <strong>Ventana de decisión</strong>
-        <p>El colchón habilita inversión controlada en tecnología o acelerar contratación. Si el cobro FDC se retrasa +60d, revisar antes de comprometer.</p>
-      </div>
+      {hasCaja && (
+        <div className="kd-action">
+          <strong>Lectura honesta</strong>
+          <p>La operación se mueve proyecto a proyecto: la caja sube cuando desembolsa un contrato y la sostiene la línea de crédito disponible. La caja propia cubre poco — prioriza asegurar el próximo desembolso antes de comprometer gasto fijo.</p>
+        </div>
+      )}
 
       {drillOpen && (
         <div className="pulso-drill-scrim" onClick={()=>setDrillOpen(false)}>
@@ -2445,42 +2812,34 @@ function CajaDetail(){
             <div style={{padding:'24px 28px', display:'flex', flexDirection:'column', gap:22}}>
               {/* Bar chart ampliado */}
               <div>
-                <div style={{fontFamily:'var(--f-sub)', fontSize:10, fontWeight:600, letterSpacing:'.14em', textTransform:'uppercase', color:'var(--mute)', paddingBottom:8, borderBottom:'1px solid var(--line)', marginBottom:14}}>TENDENCIA · 12 MESES (M COP)</div>
+                <div style={{fontFamily:'var(--f-sub)', fontSize:10, fontWeight:600, letterSpacing:'.14em', textTransform:'uppercase', color:'var(--mute)', paddingBottom:8, borderBottom:'1px solid var(--line)', marginBottom:14}}>{`TENDENCIA · ${cajaData?.mesesCount || months.length} MESES (M COP)`}</div>
                 <div style={{display:'flex', alignItems:'flex-end', gap:6, height:140, position:'relative'}}>
-                  {months.map((m,i)=>{
+                  {months.length ? months.map((m,i)=>{
                     const isLast = i===months.length-1;
                     const isSel = selMonth===i;
                     const h = (m.v/maxV*100)+'%';
-                    const MONTH_DETAIL = [
-                      {ingresos:'FDC cuota 1',i:'3.2M',egresos:'Nómina',e:'2.1M',balance:'+0.1'},
-                      {ingresos:'Alianzas',i:'2.8M',egresos:'Rodaje',e:'2.9M',balance:'-0.3'},
-                      {ingresos:'MinCultura',i:'2.6M',egresos:'Post-prod',e:'2.6M',balance:'-0.2'},
-                      {ingresos:'Privados',i:'3.0M',egresos:'Nómina',e:'2.2M',balance:'+0.4'},
-                      {ingresos:'FDC cuota 2',i:'3.8M',egresos:'Operaciones',e:'2.4M',balance:'+0.7'},
-                      {ingresos:'ACMI',i:'4.1M',egresos:'Nómina',e:'2.3M',balance:'+0.5'},
-                      {ingresos:'Alianzas',i:'4.2M',egresos:'Lab Risaralda',e:'2.6M',balance:'+0.4'},
-                      {ingresos:'FDC cuota 3',i:'4.0M',egresos:'Nómina',e:'2.1M',balance:'+0.3'},
-                      {ingresos:'Privados+FDC',i:'4.4M',egresos:'Tecnología',e:'2.2M',balance:'+0.3'},
-                      {ingresos:'MinCultura 2',i:'4.6M',egresos:'Nómina',e:'2.3M',balance:'+0.3'},
-                      {ingresos:'Alianzas',i:'4.8M',egresos:'Operaciones',e:'2.4M',balance:'+0.3'},
-                      {ingresos:'FDC+Privados',i:'5.2M',egresos:'Nómina+pauta',e:'2.6M',balance:'+0.2'},
-                    ][i] || {};
+                    // change caja-fluidity: tooltip HONESTO (hover o clic) — mes completo, liquidez, Δ real
+                    // vs mes previo, y composición caja/reservas/crédito. NO se re-inventan ingresos/egresos.
                     return (
                       <div key={i} style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4, height:'100%', justifyContent:'flex-end', position:'relative', cursor:'pointer'}}
-                           onClick={()=>setSelMonth(isSel?null:i)}>
+                           onClick={()=>setSelMonth(isSel?null:i)}
+                           onMouseEnter={()=>setSelMonth(i)}
+                           onMouseLeave={()=>setSelMonth(s=> s===i ? null : s)}>
                         {isSel && (
                           <div style={{
                             position:'absolute', bottom:'calc(100% + 8px)', left:'50%', transform:'translateX(-50%)',
-                            background:'#1a1a1a', color:'#fff', borderRadius:8, padding:'10px 13px', zIndex:100,
-                            width:160, boxShadow:'0 4px 20px rgba(0,0,0,.5)', border:'1px solid rgba(255,255,255,.1)',
-                            fontFamily:'IBM Plex Mono,monospace', fontSize:10, lineHeight:1.6,
+                            background:'#1a1a1a', color:'#fff', borderRadius:8, padding:'11px 14px', zIndex:100,
+                            width:194, boxShadow:'0 4px 20px rgba(0,0,0,.5)', border:'1px solid rgba(255,255,255,.1)',
+                            fontFamily:'IBM Plex Mono,monospace', fontSize:10, lineHeight:1.65, textAlign:'left',
                           }} onClick={e=>e.stopPropagation()}>
-                            <div style={{color:'#00FF41', marginBottom:4, fontSize:9, letterSpacing:'.08em'}}>{m.m} — ${m.v}M COP</div>
-                            <div style={{color:'#aaa', fontSize:9}}>Ingresos: <span style={{color:'#00FF41'}}>{MONTH_DETAIL.i}</span></div>
-                            <div style={{color:'#aaa', fontSize:9, marginBottom:2}}>  {MONTH_DETAIL.ingresos}</div>
-                            <div style={{color:'#aaa', fontSize:9}}>Egresos: <span style={{color:'#e89c2b'}}>{MONTH_DETAIL.e}</span></div>
-                            <div style={{color:'#aaa', fontSize:9, marginBottom:4}}>  {MONTH_DETAIL.egresos}</div>
-                            <div style={{fontSize:10, fontWeight:700, color: MONTH_DETAIL.balance?.startsWith('+')?'#00FF41':'#cc3333'}}>Balance: {MONTH_DETAIL.balance}M</div>
+                            <div style={{color:'#00FF41', fontSize:10, fontWeight:700, letterSpacing:'.04em', marginBottom:5}}>{m.full || m.m}</div>
+                            <div>Caja (banco): <strong>${m.v}M</strong></div>
+                            {m.delta != null && (
+                              <div>Δ vs mes previo: <strong style={{color: m.delta>0?'#00FF41':(m.delta<0?'#ff6b6b':'#9a9a9a')}}>{m.delta>0?'+':''}{m.delta}M</strong></div>
+                            )}
+                            {m.credito != null && (
+                              <div style={{opacity:.82, marginTop:5, borderTop:'1px solid rgba(255,255,255,.12)', paddingTop:5}}>Reservas {m.reservas}M · Crédito {m.credito}M <span style={{opacity:.7}}>(respaldo)</span></div>
+                            )}
                           </div>
                         )}
                         <span style={{fontFamily:'var(--f-num)', fontSize:9, color:isLast||isSel?'var(--falla-ink)':'var(--mute)'}}>{m.v}</span>
@@ -2488,32 +2847,55 @@ function CajaDetail(){
                         <span style={{fontFamily:'var(--f-sub)', fontSize:9, color:isLast||isSel?'var(--ink)':'var(--mute)', letterSpacing:'.04em', textAlign:'center'}}>{m.m}</span>
                       </div>
                     );
-                  })}
+                  }) : <span style={{color:'var(--mute)', fontFamily:'var(--f-body)', fontSize:12}}>sin datos financieros</span>}
                 </div>
               </div>
+              {/* change real-financial-source: fuente real + Ver/Descargar debajo de las barras (no en el
+                  tooltip efímero). Íconos SVG vectoriales -> nunca pixelados. */}
+              {source && (source.view_url || source.download_url) && (
+                <div className="kd-drill-source">
+                  <span className="kd-drill-source-lbl">
+                    Fuente: <strong>{source.fuente || 'Libro de caja'}</strong>{source.ultima_sincronizacion ? ' · act. ' + String(source.ultima_sincronizacion).slice(0,10) : ''}
+                  </span>
+                  <div className="kd-drive-btns">
+                    {source.view_url && (
+                      <a className="kd-drive-btn" href={source.view_url} target="_blank" rel="noopener noreferrer">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                        Ver hoja
+                      </a>
+                    )}
+                    {source.download_url && (
+                      <a className="kd-drive-btn dl" href={source.download_url} target="_blank" rel="noopener noreferrer">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Descargar .xlsx
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
               {/* Fuentes */}
               <div>
                 <div style={{fontFamily:'var(--f-sub)', fontSize:10, fontWeight:600, letterSpacing:'.14em', textTransform:'uppercase', color:'var(--mute)', paddingBottom:8, borderBottom:'1px solid var(--line)', marginBottom:12}}>COMPOSICIÓN DE CAJA</div>
                 <div style={{display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10}}>
-                  {sources.map(([l,v],i)=>(
+                  {sources.length ? sources.map(([l,v],i)=>(
                     <div key={i} style={{padding:'14px 16px', background:'var(--bg)', border:'1px solid var(--line)', borderRadius:'var(--r-md)'}}>
                       <div style={{fontFamily:'var(--f-sub)', fontSize:9, color:'var(--mute)', letterSpacing:'.1em', textTransform:'uppercase', marginBottom:6}}>{l}</div>
                       <div style={{fontFamily:'var(--f-num)', fontSize:22, fontWeight:700, color:'var(--ink)'}}>{v}</div>
                     </div>
-                  ))}
+                  )) : <span style={{color:'var(--mute)', fontFamily:'var(--f-body)', fontSize:12}}>sin datos financieros</span>}
                 </div>
               </div>
               {/* Flujos con barras */}
               <div>
                 <div style={{fontFamily:'var(--f-sub)', fontSize:10, fontWeight:600, letterSpacing:'.14em', textTransform:'uppercase', color:'var(--mute)', paddingBottom:8, borderBottom:'1px solid var(--line)', marginBottom:12}}>FLUJOS PRÓXIMOS 90 DÍAS</div>
                 <div style={{display:'flex', flexDirection:'column', gap:8}}>
-                  {risks.map(([l,v,t,f],i)=>(
+                  {risks.length ? risks.map(([l,v,t,f],i)=>(
                     <div key={i} style={{display:'grid', gridTemplateColumns:'1fr auto auto', gap:12, padding:'12px 14px', background:'var(--bg)', border:`1px solid ${f==='warn'?'#E8A02C':'var(--line)'}`, borderRadius:'var(--r-md)'}}>
                       <span style={{fontFamily:'var(--f-body)', fontSize:13, color:'var(--ink)', fontWeight:500}}>{l}</span>
                       <span style={{fontFamily:'var(--f-sub)', fontSize:10, color:'var(--mute)', letterSpacing:'.06em', textTransform:'uppercase', alignSelf:'center'}}>{t}</span>
                       <span style={{fontFamily:'var(--f-num)', fontSize:15, fontWeight:700, color:f==='warn'?'#f97316':'var(--falla-ink)', alignSelf:'center'}}>{v}</span>
                     </div>
-                  ))}
+                  )) : <span style={{color:'var(--mute)', fontFamily:'var(--f-body)', fontSize:12}}>sin flujos registrados</span>}
                 </div>
               </div>
             </div>
@@ -2525,9 +2907,1039 @@ function CajaDetail(){
 }
 
 /* ============================================================
+   ENTREVISTA CON LOS 7 ESPECIALISTAS (Completeness HUD)
+   ============================================================ */
+const SPECIALIST_INFO = {
+  estrategia: { name:'Especialista en Dirección Estratégica', icon:'🎯', color:'#00FF41', badge:'ESTRATEGIA', desc:'Metas estratégicas 2026–2030, peso % y cronograma.' },
+  roadmap:    { name:'Especialista en Hoja de Ruta 2030',    icon:'🗺️', color:'#33B5FF', badge:'ROADMAP', desc:'Los 12–16 hitos macro del plan estratégico.' },
+  liquidez:   { name:'Especialista en Salud Financiera',      icon:'💰', color:'#E8A02C', badge:'CAJA & LIQUIDEZ', desc:'Caja operativa real, reservas, línea de crédito y gasto mensual.' },
+  riesgos:    { name:'Especialista en Matriz de Riesgos',    icon:'🛡️', color:'#FF4444', badge:'RIESGOS', desc:'Identificación de riesgos principales, impacto (1–5) y mitigación.' },
+  kpi_areas:  { name:'Especialista en KPIs Directivos',       icon:'📊', color:'#B533FF', badge:'INDICADORES', desc:'KPIs principales, metas numéricas y periodicidad por área.' },
+  planes:     { name:'Especialista en Planes Directivos',       icon:'📋', color:'#33FFB5', badge:'PLANES', desc:'Responsables directivos y ventanas de tiempo por área.' },
+  tareas:     { name:'Especialista en Ejecución Operativa',  icon:'⚡', color:'#FFFF33', badge:'TAREAS', desc:'Priorización y carga de tareas activas.' },
+};
+
+function InterviewBanner({ interview, onOpen }) {
+  if (!interview || interview.completitud_pct >= 100) return null;
+  const pct = interview.completitud_pct || 0;
+  const pendingCount = (interview.questions || []).length;
+
+  return (
+    <div className="interview-banner">
+      <div className="ib-left">
+        <span className="ib-badge">ENTREVISTA DE DIAGNÓSTICO</span>
+        <div className="ib-title">
+          Completitud del Centro de Mando: <strong>{pct}%</strong>
+          {pendingCount > 0 && <span className="ib-sub"> · {pendingCount} especialistas detectaron vacíos de información</span>}
+        </div>
+      </div>
+      <div className="ib-right">
+        <div className="ib-progress-bar">
+          <div className="ib-progress-fill" style={{ width: `${pct}%` }} />
+        </div>
+        <button className="ib-btn" onClick={onOpen}>
+          Cuestionario de los 7 Especialistas →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InterviewModal({ open, onClose, interview, onRefresh }) {
+  if (!open || !interview) return null;
+
+  const questions = interview.questions || [];
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [status, setStatus] = useState('idle');
+  const [errMsg, setErrMsg] = useState('');
+  const [okMsg, setOkMsg] = useState('');
+
+  const [liqForm, setLiqForm] = useState({ caja_operativa: '', reservas_estrategicas: '', credito_disponible: '', gasto_mensual_promedio: '' });
+  const [riskForm, setRiskForm] = useState([{ descripcion: '', area: 'Comercial', impacto: 3, probabilidad: 3, estado_mitigacion: 'monitoreado' }]);
+  const [roadForm, setRoadForm] = useState([{ titulo: '', area: 'Comercial', anio: 2026, fecha_fin_planificada: '', estado: 'pendiente' }]);
+  const [kpiForm, setKpiForm] = useState([
+    { area: 'Comercial', label: 'Recaudación vs Meta', target: '620000000', period: 'mensual' },
+    { area: 'Proyectos', label: 'Índice de Ejecución', target: '80', period: 'mensual' },
+    { area: 'Investigacion', label: 'Producción de Contenido', target: '25', period: 'mensual' },
+    { area: 'Audiovisual', label: 'Eficiencia de Producción', target: '15', period: 'mensual' }
+  ]);
+  const [stratForm, setStratForm] = useState([{ codigo: 'OBJ-01', titulo: '', area: 'Comercial', fecha_inicio: '', fecha_fin_meta: '', peso_porcentaje: 25 }]);
+
+  const q = questions[activeIdx] || questions[0];
+  const domain = q ? q.domain : 'liquidez';
+  const info = SPECIALIST_INFO[domain] || { name: domain, icon: '💡', color: '#00FF41', badge: domain.toUpperCase(), desc: q?.pregunta || '' };
+
+  const submitAnswer = async (payload) => {
+    setStatus('thinking');
+    setErrMsg('');
+    setOkMsg('');
+
+    try {
+      const k = window.__API_KEY__ || '';
+      const b = (window.__API_BASE__ || '/api').replace(/\/$/, '');
+      const res = await fetch(`${b}/interview/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(k ? { 'X-API-Key': k } : {}) },
+        body: JSON.stringify({ domain, answer: payload })
+      });
+      const data = await res.json().catch(() => ({ detail: 'Error al interpretar respuesta' }));
+
+      if (!res.ok) {
+        setStatus('err');
+        setErrMsg(data.detail || 'No se pudo procesar la respuesta');
+        return;
+      }
+
+      setStatus('ok');
+      setOkMsg(`✓ Registros integrados con éxito (${data.registros_escritos || 1} actualizado)`);
+      setTimeout(() => {
+        setStatus('idle');
+        setOkMsg('');
+        if (onRefresh) onRefresh();
+        if (activeIdx < questions.length - 1) {
+          setActiveIdx(activeIdx + 1);
+        } else {
+          onClose();
+        }
+      }, 1400);
+    } catch (e) {
+      setStatus('err');
+      setErrMsg('Error de conexión con el servidor.');
+    }
+  };
+
+  const handleLiqSubmit = (e) => {
+    e.preventDefault();
+    submitAnswer({
+      caja_operativa: Number(liqForm.caja_operativa),
+      reservas_estrategicas: Number(liqForm.reservas_estrategicas),
+      credito_disponible: Number(liqForm.credito_disponible),
+      gasto_mensual_promedio: Number(liqForm.gasto_mensual_promedio),
+    });
+  };
+
+  const handleRiskSubmit = (e) => {
+    e.preventDefault();
+    submitAnswer({ risks: riskForm });
+  };
+
+  const handleRoadSubmit = (e) => {
+    e.preventDefault();
+    submitAnswer({ milestones: roadForm });
+  };
+
+  const handleKpiSubmit = (e) => {
+    e.preventDefault();
+    submitAnswer({ kpis: kpiForm });
+  };
+
+  const handleStratSubmit = (e) => {
+    e.preventDefault();
+    submitAnswer({ goals: stratForm });
+  };
+
+  return (
+    <div className="interview-scrim" onClick={onClose}>
+      <div className="interview-box" onClick={e => e.stopPropagation()}>
+        <div className="ib-modal-hd">
+          <div className="ib-spec-icon" style={{ borderColor: info.color }}>{info.icon}</div>
+          <div>
+            <div className="ib-spec-badge" style={{ color: info.color }}>ESPECIALISTA EN {info.badge}</div>
+            <h3>{info.name}</h3>
+          </div>
+          <button className="deploy-close" onClick={onClose}>×</button>
+        </div>
+
+        <div className="ib-hud-header">
+          <div className="ib-hud-label">
+            DIAGNÓSTICO DE COMPLETITUD · <strong>{interview.completitud_pct}% COMPLETADO</strong>
+          </div>
+          <div className="ib-tabs">
+            {questions.map((item, idx) => {
+              const sp = SPECIALIST_INFO[item.domain] || {};
+              return (
+                <button
+                  key={item.domain}
+                  className={'ib-tab ' + (activeIdx === idx ? 'on' : '')}
+                  onClick={() => { setActiveIdx(idx); setStatus('idle'); setErrMsg(''); setOkMsg(''); }}
+                >
+                  <span>{sp.icon || '•'}</span>
+                  <span>{sp.badge || item.domain}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="ib-modal-body">
+          <div className="ib-question-box">
+            <div className="ib-q-prompt">«{q?.pregunta || info.desc}»</div>
+            <div className="ib-q-meta">Los datos ingresados poblarán automáticamente la base de datos y activarán los paneles correspondientes.</div>
+          </div>
+
+          {status === 'thinking' ? (
+            <div className="ib-thinking-box">
+              <span className="ib-spinner" />
+              <div className="ib-thinking-text">
+                <strong>Gentil sintetizando información…</strong>
+                <span>Validando con el {info.name} e integrando los registros al Centro de Mando.</span>
+              </div>
+            </div>
+          ) : status === 'ok' ? (
+            <div className="ib-ok-box">
+              <div className="ib-ok-check">✓</div>
+              <div className="ib-ok-text">{okMsg}</div>
+            </div>
+          ) : (
+            <div className="ib-form-container">
+              {errMsg && <div className="ib-err">{errMsg}</div>}
+
+
+              {domain === 'liquidez' && (
+                <form onSubmit={handleLiqSubmit} className="ib-form">
+                  <div className="ib-grid-2">
+                    <label>
+                      <span>Caja Operativa Actual (COP)</span>
+                      <input type="number" required placeholder="Ej: 55000000" value={liqForm.caja_operativa} onChange={e => setLiqForm({ ...liqForm, caja_operativa: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>Reservas Estratégicas (COP)</span>
+                      <input type="number" required placeholder="Ej: 30000000" value={liqForm.reservas_estrategicas} onChange={e => setLiqForm({ ...liqForm, reservas_estrategicas: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>Crédito Disponible (COP)</span>
+                      <input type="number" required placeholder="Ej: 20000000" value={liqForm.credito_disponible} onChange={e => setLiqForm({ ...liqForm, credito_disponible: e.target.value })} />
+                    </label>
+                    <label>
+                      <span>Gasto Mensual Promedio (COP)</span>
+                      <input type="number" required placeholder="Ej: 18000000" value={liqForm.gasto_mensual_promedio} onChange={e => setLiqForm({ ...liqForm, gasto_mensual_promedio: e.target.value })} />
+                    </label>
+                  </div>
+                  <button type="submit" className="ib-submit-btn">Sintetizar e Integrar a Liquidez →</button>
+                </form>
+              )}
+
+              {domain === 'riesgos' && (
+                <form onSubmit={handleRiskSubmit} className="ib-form">
+                  {riskForm.map((r, i) => (
+                    <div key={i} className="ib-risk-item">
+                      <label>
+                        <span>Descripción del Riesgo</span>
+                        <input type="text" required placeholder="Ej: Retraso en entregas por sobredemandas directivas" value={r.descripcion} onChange={e => { const copy = [...riskForm]; copy[i].descripcion = e.target.value; setRiskForm(copy); }} />
+                      </label>
+                      <div className="ib-grid-3">
+                        <label>
+                          <span>Área</span>
+                          <select value={r.area} onChange={e => { const copy = [...riskForm]; copy[i].area = e.target.value; setRiskForm(copy); }}>
+                            <option value="Comercial">Comercial</option>
+                            <option value="Proyectos">Proyectos</option>
+                            <option value="Investigacion">Investigación</option>
+                            <option value="Audiovisual">Audiovisual</option>
+                            <option value="Transversal">Transversal</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Impacto (1-5)</span>
+                          <input type="number" min="1" max="5" value={r.impacto} onChange={e => { const copy = [...riskForm]; copy[i].impacto = Number(e.target.value); setRiskForm(copy); }} />
+                        </label>
+                        <label>
+                          <span>Probabilidad (1-5)</span>
+                          <input type="number" min="1" max="5" value={r.probabilidad} onChange={e => { const copy = [...riskForm]; copy[i].probabilidad = Number(e.target.value); setRiskForm(copy); }} />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                  <button type="submit" className="ib-submit-btn">Sintetizar e Integrar a Matriz de Riesgos →</button>
+                </form>
+              )}
+
+              {domain === 'roadmap' && (
+                <form onSubmit={handleRoadSubmit} className="ib-form">
+                  {roadForm.map((h, i) => (
+                    <div key={i} className="ib-risk-item">
+                      <label>
+                        <span>Título del Hito Estratégico</span>
+                        <input type="text" required placeholder="Ej: Red de nodos regionales consolidada en 5 ciudades" value={h.titulo} onChange={e => { const copy = [...roadForm]; copy[i].titulo = e.target.value; setRoadForm(copy); }} />
+                      </label>
+                      <div className="ib-grid-3">
+                        <label>
+                          <span>Área</span>
+                          <select value={h.area} onChange={e => { const copy = [...roadForm]; copy[i].area = e.target.value; setRoadForm(copy); }}>
+                            <option value="Comercial">Comercial</option>
+                            <option value="Proyectos">Proyectos</option>
+                            <option value="Investigacion">Investigación</option>
+                            <option value="Audiovisual">Audiovisual</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Año Objetivo</span>
+                          <input type="number" min="2026" max="2035" value={h.anio} onChange={e => { const copy = [...roadForm]; copy[i].anio = Number(e.target.value); setRoadForm(copy); }} />
+                        </label>
+                        <label>
+                          <span>Fecha Meta (YYYY-MM-DD)</span>
+                          <input type="date" value={h.fecha_fin_planificada} onChange={e => { const copy = [...roadForm]; copy[i].fecha_fin_planificada = e.target.value; setRoadForm(copy); }} />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                  <button type="submit" className="ib-submit-btn">Sintetizar e Integrar al Roadmap 2030 →</button>
+                </form>
+              )}
+
+              {domain === 'kpi_areas' && (
+                <form onSubmit={handleKpiSubmit} className="ib-form">
+                  {kpiForm.map((k, i) => (
+                    <div key={i} className="ib-risk-item">
+                      <strong className="ib-kpi-area-title">{k.area}</strong>
+                      <div className="ib-grid-2">
+                        <label>
+                          <span>Nombre del KPI</span>
+                          <input type="text" required value={k.label} onChange={e => { const copy = [...kpiForm]; copy[i].label = e.target.value; setKpiForm(copy); }} />
+                        </label>
+                        <label>
+                          <span>Target Numérico</span>
+                          <input type="number" required value={k.target} onChange={e => { const copy = [...kpiForm]; copy[i].target = e.target.value; setKpiForm(copy); }} />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                  <button type="submit" className="ib-submit-btn">Sintetizar e Integrar KPIs por Área →</button>
+                </form>
+              )}
+
+              {domain === 'estrategia' && (
+                <form onSubmit={handleStratSubmit} className="ib-form">
+                  {stratForm.map((g, i) => (
+                    <div key={i} className="ib-risk-item">
+                      <label>
+                        <span>Meta Estratégica</span>
+                        <input type="text" required placeholder="Ej: Lograr autonomía financiera con 60% de ingresos recurrentes" value={g.titulo} onChange={e => { const copy = [...stratForm]; copy[i].titulo = e.target.value; setStratForm(copy); }} />
+                      </label>
+                      <div className="ib-grid-3">
+                        <label>
+                          <span>Área</span>
+                          <select value={g.area} onChange={e => { const copy = [...stratForm]; copy[i].area = e.target.value; setStratForm(copy); }}>
+                            <option value="Comercial">Comercial</option>
+                            <option value="Proyectos">Proyectos</option>
+                            <option value="Investigacion">Investigación</option>
+                            <option value="Audiovisual">Audiovisual</option>
+                            <option value="Transversal">Transversal</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Peso (%)</span>
+                          <input type="number" min="1" max="100" value={g.peso_porcentaje} onChange={e => { const copy = [...stratForm]; copy[i].peso_porcentaje = Number(e.target.value); setStratForm(copy); }} />
+                        </label>
+                        <label>
+                          <span>Fecha Meta</span>
+                          <input type="date" value={g.fecha_fin_meta} onChange={e => { const copy = [...stratForm]; copy[i].fecha_fin_meta = e.target.value; setStratForm(copy); }} />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                  <button type="submit" className="ib-submit-btn">Sintetizar e Integrar Metas Estratégicas →</button>
+                </form>
+              )}
+
+              {['planes', 'tareas'].includes(domain) && (
+                <div className="ib-confirm-box">
+                  <p>Gentil ha estructurado el modelo inicial para {domain}. ¿Deseas confirmar la línea base actual?</p>
+                  <button onClick={() => submitAnswer({ confirmado: true })} className="ib-submit-btn">Confirmar e Integrar Línea Base →</button>
+                </div>
+              )}
+
+              <div style={{ marginTop:16, textAlign:'right' }}>
+                <button type="button" className="ib-skip-btn" onClick={() => { if (activeIdx < questions.length - 1) setActiveIdx(activeIdx + 1); else onClose(); }} style={{ background:'transparent', color:'var(--mute)', border:'1px dashed #444', borderRadius:6, padding:'8px 14px', fontSize:11, cursor:'pointer' }}>
+                  Aún no tengo este documento / Responder después
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   ONBOARDING HUB — Gentil's structured diagnostic interview
+   (change rebuild-onboarding-hub · design: Claude Design handoff
+   "onboardinghub-para-centro-de-mando")
+   Every card derives its state from the REAL /api/interview
+   payload and every figure comes from window.__CM_DATA__ or a
+   live endpoint — no hardcoded copy, no fabricated numbers.
+   ============================================================ */
+const HUB_DOMAINS = ['estrategia','liquidez','riesgos','roadmap','kpi_areas','planes','tareas'];
+const HUB_META = {
+  estrategia: { title:'Visión y Metas 2030',        icon:'🎯', badge:'ESTRATEGIA' },
+  liquidez:   { title:'Salud Financiera',           icon:'💰', badge:'CAJA & LIQUIDEZ' },
+  riesgos:    { title:'Radar de Riesgos',           icon:'🛡️', badge:'RIESGOS' },
+  roadmap:    { title:'Hoja de Ruta',               icon:'🗺️', badge:'ROADMAP' },
+  kpi_areas:  { title:'Indicadores por Dirección',  icon:'📊', badge:'INDICADORES' },
+  planes:     { title:'Planes Operativos',          icon:'📋', badge:'PLANES' },
+  tareas:     { title:'Tareas Directivas',          icon:'⚡', badge:'TAREAS' },
+};
+const HUB_AREAS = ['Comercial','Proyectos','Investigacion','Audiovisual'];
+const HUB_AREA_MONO = { Comercial:'DC', Proyectos:'DP', Investigacion:'DI', Audiovisual:'DA' };
+const HUB_RISK_ESTADOS = ['monitoreado','en_mitigacion','critico','resuelto'];
+const HUB_SIN_FUENTE = '[SIN FUENTE]';
+
+let __hubUid = 100;
+const hubUid = () => __hubUid++;
+
+async function hubApi(path, opts = {}) {
+  await (window.__CM_KEY_READY__ || Promise.resolve());
+  const k = window.__API_KEY__ || '';
+  const b = (window.__API_BASE__ || '/api').replace(/\/$/, '');
+  return fetch(`${b}${path}`, {
+    ...opts,
+    headers: { ...(opts.headers || {}), ...(k ? { 'X-API-Key': k } : {}) },
+  });
+}
+
+function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
+  const iv = interview;
+  const risksData = useApiData('risks');
+  const cajaData = useApiData('caja');
+  const milestonesData = useApiData('milestones');
+
+  const [transitioning, setTransitioning] = useState(false);
+  const [modalDomain, setModalDomain] = useState(null);
+  const [modalErr, setModalErr] = useState('');
+  const [modalOk, setModalOk] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [estrategiaRows, setEstrategiaRows] = useState([{ id:hubUid(), codigo:'', titulo:'', area:'Comercial', peso:'', fechaInicio:'', fechaFin:'' }]);
+  const [riesgosRows, setRiesgosRows] = useState([{ id:hubUid(), descripcion:'', area:'Comercial', impacto:3, probabilidad:3, estado:'monitoreado' }]);
+  const [roadmapRows, setRoadmapRows] = useState([{ id:hubUid(), titulo:'', area:'Comercial', anio:'' }]);
+  const [kpiRows, setKpiRows] = useState(HUB_AREAS.map(a => ({ area:a, label:'', target:'', period:'mensual' })));
+  const [liq, setLiq] = useState({ caja:'', reservas:'', credito:'', gasto:'' });
+  const [liqPrefilled, setLiqPrefilled] = useState(false);
+
+  const [radarErr, setRadarErr] = useState('');
+  const [radarMsg, setRadarMsg] = useState('');
+  const [radarRunning, setRadarRunning] = useState(false);
+
+  const [chatMsgs, setChatMsgs] = useState([
+    { role:'gentil', content:'Hola, soy **Gentil**. Este es el diagnóstico inicial del Centro de Mando: cada tarjeta muestra lo que ya sé de La Falla y lo que me falta. Toca una tarjeta para completarla, o pregúntame por dónde empezar.' },
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatRef = React.useRef(null);
+
+  const [upload, setUpload] = useState(null);   // null | {stage:'proc'|'ok'|'err', text}
+  const fileRef = React.useRef(null);
+  const hubRef = React.useRef(null);
+
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+  useEffect(() => {
+    if (chatRef.current && chatMsgs.length > 1) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+  }, [chatMsgs, chatLoading]);
+
+  // Entrance: film-leader style stagger. Collapses to nothing under prefers-reduced-motion.
+  React.useLayoutEffect(() => {
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || !window.gsap || !hubRef.current || !iv) return;
+    const ctx = window.gsap.context(() => {
+      window.gsap.from('[data-hub-card]', { y:16, opacity:0, stagger:0.06, duration:0.5, ease:'power2.out' });
+    }, hubRef.current);
+    return () => ctx.revert();
+  }, [!!iv]);
+
+  // ── Domain state from the REAL interview payload ────────────────────────────
+  const dataReady = !!window.__CM_DATA__;
+  const questionFor = (key) => (iv && Array.isArray(iv.questions)) ? iv.questions.find(q => q.domain === key) : null;
+  const estadoFor = (key) => {
+    const q = questionFor(key);
+    if (!q) return 'ok';
+    return q.grupo === 'gap' ? 'empty' : 'thin';
+  };
+  const priority = iv ? (HUB_DOMAINS.find(k => estadoFor(k) === 'empty') || HUB_DOMAINS.find(k => estadoFor(k) === 'thin') || null) : null;
+
+  const milestoneCount = Array.isArray(milestonesData) ? milestonesData.length : null;
+  const milestonesConAnio = Array.isArray(milestonesData) ? milestonesData.filter(m => m.anio != null).length : null;
+  const riskCount = Array.isArray(risksData) ? risksData.length : null;
+  const analyzedCount = Array.isArray(risksData) ? risksData.filter(r => r.gentil_analysis).length : 0;
+  const latest = cajaData && cajaData.latest ? cajaData.latest : null;
+
+  const gentilBrief = () => {
+    if (!iv) return null;
+    if (!priority) return 'Los 7 dominios están completos. El Centro de Mando ya refleja tu operación real.';
+    const briefs = {
+      estrategia: 'el Centro de Mando no tiene metas estratégicas registradas — sin ellas, nada más puede activarse. Empieza por ahí.',
+      liquidez: 'falta una foto financiera reciente. El radar de caja no puede operar sin ella.',
+      riesgos: latest && latest.asOf
+        ? `tienes la caja conectada al libro real (al ${latest.asOf}) pero el radar de riesgos está vacío — empieza por ahí.`
+        : 'el radar de riesgos está vacío — sin riesgos registrados, el análisis estratégico de Gentil está ciego.',
+      roadmap: 'la hoja de ruta necesita hitos con año asignado para que la grilla de ejecución salga del modo demo.',
+      kpi_areas: 'faltan indicadores por dirección — completa las 4 direcciones (DC · DP · DI · DA).',
+      planes: 'hay planes derivados de tu estrategia sin responsable o fecha de cierre.',
+      tareas: 'hay planes activos sin tareas desglosadas — los directores no pueden arrancar.',
+    };
+    return `Clementino, ${briefs[priority] || ''}`;
+  };
+
+  const radarStatus = () => {
+    if (radarRunning) return 'Analizando…';
+    if (riskCount == null) return 'Radar: sin datos aún';
+    if (riskCount === 0) return 'Sin riesgos en el radar';
+    return `${analyzedCount}/${riskCount} riesgos con análisis de Gentil`;
+  };
+
+  // 4×4 miniature of the REAL risk radar: same toCell() bucketing (api-client) and
+  // the same color thresholds — the thumbnail must match what the CEO finds inside.
+  const heatCells = () => {
+    const cells = [];
+    const risks = Array.isArray(risksData) ? risksData : [];
+    for (let y = 3; y >= 0; y--) {
+      for (let x = 0; x < 4; x++) {
+        const hit = risks.find(r => r.x === x && r.y === y);
+        cells.push(hit ? (hit.c === 'high' ? '#d84a3a' : hit.c === 'med' ? '#e89c2b' : '#00FF41') : '');
+      }
+    }
+    return cells;
+  };
+
+  // ── Card view-model (bodyText for gap/enrich = the REAL backend question) ──
+  const cardFor = (key) => {
+    const meta = HUB_META[key];
+    const q = questionFor(key);
+    const estado = estadoFor(key);
+    const card = { key, estado, title: meta.title, icon: meta.icon, isPriority: key === priority, body:'', extras:null };
+    if (q) {
+      card.body = q.pregunta || '';
+    } else {
+      const okBodies = {
+        estrategia: 'Metas estratégicas activas en el marco 2026–2030.',
+        liquidez: latest
+          ? `Runway: ${latest.cashRunway != null ? latest.cashRunway : latest.meses} meses · saldo real${latest.asOf ? ' al ' + latest.asOf : ''}${cajaData && cajaData.source ? ' · ' + (cajaData.source.fuente || 'libro real') : ''}`
+          : 'Foto financiera al día.',
+        riesgos: riskCount != null ? `${riskCount} riesgo${riskCount === 1 ? '' : 's'} en el radar de Gentil.` : 'Radar activo.',
+        roadmap: milestoneCount != null
+          ? `${milestoneCount} hitos registrados · ${milestonesConAnio} con año asignado${milestonesConAnio === 0 ? ' — la grilla 2030 sigue en modo demo' : ''}.`
+          : 'Hoja de ruta registrada.',
+        kpi_areas: '4/4 direcciones con KPI configurado.',
+        planes: 'Planes operativos al día (derivados de la cascada estratégica).',
+        tareas: 'Tareas desglosadas para los planes activos.',
+      };
+      card.body = okBodies[key] || '';
+    }
+    return card;
+  };
+
+  const groups = { gap:[], enrich:[], ok:[] };
+  if (iv) HUB_DOMAINS.forEach(k => {
+    const c = cardFor(k);
+    groups[c.estado === 'empty' ? 'gap' : c.estado === 'thin' ? 'enrich' : 'ok'].push(c);
+  });
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+  const unlock = () => {
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) { onUnlock(); return; }
+    setTransitioning(true);
+    setTimeout(onUnlock, 520);
+  };
+
+  const openModal = (key) => {
+    setModalDomain(key); setModalErr(''); setModalOk(false);
+    if (key === 'liquidez' && latest && !liqPrefilled) {
+      // CM_DATA stores caja figures in millions (1 decimal) — prefill raw pesos.
+      setLiq({
+        caja: latest.caja != null ? String(Math.round(latest.caja * 1e6)) : '',
+        reservas: latest.reservas != null ? String(Math.round(latest.reservas * 1e6)) : '',
+        credito: latest.credito != null ? String(Math.round(latest.credito * 1e6)) : '',
+        gasto: '',
+      });
+      setLiqPrefilled(true);
+    }
+  };
+
+  const buildAnswer = (key) => {
+    if (key === 'estrategia') return { goals: estrategiaRows
+      .filter(r => r.codigo.trim() && r.titulo.trim())
+      .map(r => ({ codigo:r.codigo.trim(), titulo:r.titulo.trim(), area:r.area,
+        fecha_inicio: r.fechaInicio || null, fecha_fin_meta: r.fechaFin || null,
+        peso_porcentaje: r.peso === '' ? null : Number(r.peso) })) };
+    if (key === 'liquidez') return {
+      fecha: new Date().toISOString().slice(0,10),
+      caja_operativa: Number(liq.caja), reservas_estrategicas: Number(liq.reservas || 0),
+      credito_disponible: Number(liq.credito || 0), gasto_mensual_promedio: Number(liq.gasto),
+    };
+    if (key === 'riesgos') return { risks: riesgosRows
+      .filter(r => r.descripcion.trim())
+      .map(r => ({ descripcion:r.descripcion.trim(), area:r.area,
+        impacto: parseInt(r.impacto, 10), probabilidad: parseInt(r.probabilidad, 10),
+        estado_mitigacion: r.estado })) };
+    if (key === 'roadmap') return { milestones: roadmapRows
+      .filter(r => r.titulo.trim())
+      .map((r, i) => ({ titulo:r.titulo.trim(), orden:i + 1, estado:'pendiente', area:r.area,
+        anio: r.anio === '' ? null : Number(r.anio) })) };
+    if (key === 'kpi_areas') return { kpis: kpiRows
+      .filter(r => r.label.trim() && r.target !== '')
+      .map(r => ({ area:r.area, kpi_code:HUB_AREA_MONO[r.area], label:r.label.trim(),
+        target:Number(r.target), period:r.period })) };
+    return { confirmado: true };   // planes / tareas: enrich confirmation
+  };
+
+  const submitDomain = async (key) => {
+    setSubmitting(true); setModalErr('');
+    try {
+      const r = await hubApi('/interview/answer', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ domain:key, answer: buildAnswer(key) }),
+      });
+      const data = await r.json().catch(() => null);
+      if (r.ok) {
+        setModalOk(true);
+        if (window.__CM_REFRESH__) window.__CM_REFRESH__();
+        setTimeout(() => { setModalDomain(null); setModalOk(false); }, 1400);
+      } else {
+        const detail = data && (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+        setModalErr(detail || `El servidor rechazó la respuesta (HTTP ${r.status}). Nada se guardó.`);
+      }
+    } catch (e) {
+      setModalErr('No pude conectar con el servidor — nada se guardó. Revisa la conexión e intenta de nuevo.');
+    } finally { setSubmitting(false); }
+  };
+
+  const runRadar = async () => {
+    setRadarRunning(true); setRadarErr(''); setRadarMsg('');
+    try {
+      const r = await hubApi('/risks/heartbeat', { method:'POST' });
+      const data = await r.json().catch(() => null);
+      if (r.ok) {
+        setRadarMsg(`Radar ejecutado: ${data && data.analizados != null ? data.analizados : '?'} analizados · ${data && data.propuestos != null ? data.propuestos : '?'} propuestos.`);
+        if (window.__CM_REFRESH__) window.__CM_REFRESH__();
+      } else {
+        setRadarErr((data && data.detail) || `El radar respondió error ${r.status}.`);
+      }
+    } catch (e) {
+      setRadarErr('No pude conectar con el radar — nada se ejecutó.');
+    } finally { setRadarRunning(false); }
+  };
+
+  const sendChat = async (e) => {
+    e.preventDefault();
+    const text = chatInput.trim();
+    if (!text || chatLoading) return;
+    const next = [...chatMsgs, { role:'user', content:text }];
+    setChatMsgs(next); setChatInput(''); setChatLoading(true);
+    try {
+      const history = next.slice(-6).map(m => ({ role: m.role === 'gentil' ? 'assistant' : 'user', content: m.content }));
+      const r = await hubApi('/chat', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ message:text, history }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        setChatMsgs(p => [...p, { role:'gentil', content: data.response || 'Recibí tu mensaje.' }]);
+      } else {
+        // Honest failure: never claim anything was integrated when it was not.
+        setChatMsgs(p => [...p, { role:'gentil', content:`⚠ El motor de chat respondió error ${r.status}. Tu mensaje NO fue procesado ni guardado — intenta de nuevo en un momento.` }]);
+      }
+    } catch (err) {
+      setChatMsgs(p => [...p, { role:'gentil', content:'⚠ No pude conectar con el motor de chat. Tu mensaje NO fue procesado ni guardado.' }]);
+    } finally { setChatLoading(false); }
+  };
+
+  const handleUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    setUpload({ stage:'proc', text:`Subiendo y analizando «${file.name}» — la cascada real está corriendo…` });
+    try {
+      const fd = new FormData();
+      fd.append('intent', 'plan');
+      fd.append('file', file, file.name);
+      const r = await hubApi('/strategy/ingest-resource', { method:'POST', body: fd });
+      const data = await r.json().catch(() => null);
+      if (r.ok) {
+        setUpload({ stage:'ok', text:'✓ Documento integrado por la cascada — re-diagnosticando los paneles…' });
+        if (window.__CM_REFRESH__) window.__CM_REFRESH__();
+        setTimeout(() => setUpload(null), 7000);
+      } else {
+        const detail = data && (data.detail || data.message);
+        setUpload({ stage:'err', text:`⚠ El servidor no pudo procesar el documento (HTTP ${r.status}${detail ? ': ' + String(detail).slice(0,140) : ''}). Nada se guardó.` });
+      }
+    } catch (err) {
+      setUpload({ stage:'err', text:'⚠ Error de conexión al subir el documento — nada se guardó.' });
+    }
+  };
+
+  const renderMd = (content) => {
+    if (window.marked && typeof window.marked.parse === 'function') return { __html: window.marked.parse(content) };
+    return { __html: String(content).replace(/\n/g, '<br/>') };
+  };
+
+  // ── Render pieces ──────────────────────────────────────────────────────────
+  const renderCard = (card) => (
+    <div key={card.key} data-hub-card="" data-testid={`hub-card-${card.key}`}
+         className={`hub-card hub-card--${card.estado}`} role="button" tabIndex={0}
+         onClick={() => openModal(card.key)}
+         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModal(card.key); }}>
+      <div className="hub-card-top">
+        <div className="hub-card-id">
+          <span className="hub-ico">{card.icon}</span>
+          <span className="hub-card-title">{card.title}</span>
+        </div>
+        {card.isPriority && <span className="hub-prio">★ PRIORIDAD GENTIL</span>}
+      </div>
+      <span className={`hub-state hub-state--${card.estado}`}>
+        {card.estado === 'empty' && <span className="hub-state-dot"/>}
+        {card.estado === 'empty' ? 'VACÍO' : card.estado === 'thin' ? 'INCOMPLETO' : 'COMPLETO'}
+      </span>
+
+      {card.key === 'riesgos' && (
+        <div className="hub-heat-wrap">
+          <div className="hub-heat">
+            {heatCells().map((c, i) => <span key={i} className="hub-heat-cell" style={c ? { background:c } : null}/>)}
+          </div>
+          <span className="hub-heat-status">{radarStatus()}</span>
+        </div>
+      )}
+
+      {card.key === 'liquidez' && (
+        <div className="hub-five">
+          {[
+            { code:'ingreso',   label:'Ingresó',  val:HUB_SIN_FUENTE, live:false },
+            { code:'egreso',    label:'Salió',    val:HUB_SIN_FUENTE, live:false },
+            { code:'caja',      label:'Queda',    val: latest && latest.caja != null ? `$${latest.caja}M` : HUB_SIN_FUENTE, live: !!latest },
+            { code:'porpagar',  label:'Debo',     val:HUB_SIN_FUENTE, live:false },
+            { code:'porcobrar', label:'Me deben', val:HUB_SIN_FUENTE, live:false },
+          ].map(s => (
+            <div key={s.code} data-testid={`five-q-slot-${s.code}`} className={`hub-slot${s.live ? ' live' : ''}`}>
+              <span className="hub-slot-label">{s.label}</span>
+              <span className="hub-slot-val">{s.val}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {card.key === 'kpi_areas' && (
+        <div className="hub-pills">
+          {HUB_AREAS.map(a => (
+            <span key={a} className="hub-pill">
+              <span className="hub-pill-mono">{HUB_AREA_MONO[a]}</span>{a === 'Investigacion' ? 'Investigación' : a}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <p className="hub-card-body">{card.body}</p>
+
+      {card.key === 'riesgos' && analyzedCount > 0 && (
+        <span className="hub-ai-badge" title="Análisis del cerebro profundo de Gentil sobre tus riesgos.">✦ Analizado por Gentil</span>
+      )}
+    </div>
+  );
+
+  const rowInput = (props) => <input {...props} className={'hub-input' + (props.className ? ' ' + props.className : '')}/>;
+
+  const modalMeta = modalDomain ? HUB_META[modalDomain] : null;
+  const modalQ = modalDomain ? questionFor(modalDomain) : null;
+
+  return (
+    <main className="hub-root" data-testid="onboarding-hub">
+      <div className="hub-grain"/>
+      <div className="hub-bggrid"/>
+
+      {/* Slim persistent top bar: location + theme + escape hatch (never a prison) */}
+      <div className="hub-topbar">
+        <div className="hub-brand">
+          <span className="wm">LA FALLA</span><span className="slash">/</span><span className="nm">GENTIL</span>
+          <span className="mod">· Centro de Mando</span>
+        </div>
+        <div className="hub-topbar-spacer"/>
+        <button className="hub-top-btn" onClick={onTheme}>{theme === 'dark' ? 'CLARO' : 'OSCURO'}</button>
+        <button className="hub-top-btn hub-top-btn--go" data-testid="unlock-button" onClick={unlock}>Ver tablero →</button>
+      </div>
+
+      {transitioning && (<>
+        <div className="hub-letterbox top"/>
+        <div className="hub-letterbox bottom"/>
+      </>)}
+
+      <div className="hub-wrap" ref={hubRef}>
+        <div className="hub-crumb">
+          <span className="hub-crumb-loc">Centro de Mando · Configuración inicial</span>
+          <span className="hub-crumb-sep">·</span>
+          <span className="hub-crumb-name">Clementino</span>
+        </div>
+
+        {/* Gentil brief + honest completeness timecode */}
+        <div className="hub-gentil" data-hub-card="">
+          <div className="hub-gentil-head">
+            <span className="hub-gentil-dot"/>
+            <span className="hub-gentil-label">Gentil</span>
+          </div>
+          <p className="hub-gentil-brief">
+            {iv ? gentilBrief() : (dataReady
+              ? 'No pude cargar el diagnóstico del Centro de Mando (/api/interview no respondió). Recarga la página o revisa el servicio.'
+              : 'Conectando con el diagnóstico del Centro de Mando…')}
+          </p>
+          <div className="hub-progress-row">
+            <div className="hub-progress"><div className="hub-progress-fill" style={{ width: iv ? `${iv.completitud_pct}%` : '0%' }}/></div>
+            <span className="hub-readout" data-testid="completeness-readout">
+              {iv ? `${iv.completitud_pct}%` : '—'} <span className="sep">·</span> {iv ? `${iv.domains_ok}/${iv.domains_total}` : '—/—'} DOMINIOS
+              <span className="hub-cursor"/>
+            </span>
+          </div>
+        </div>
+
+        {iv && groups.gap.length > 0 && (
+          <div className="hub-group">
+            <div className="hub-group-label hub-group-label--gap">VACÍO · requiere respuesta</div>
+            <div className="hub-grid">{groups.gap.map(renderCard)}</div>
+          </div>
+        )}
+        {iv && groups.enrich.length > 0 && (
+          <div className="hub-group">
+            <div className="hub-group-label hub-group-label--enrich">INCOMPLETO · confirmar o completar</div>
+            <div className="hub-grid">{groups.enrich.map(renderCard)}</div>
+          </div>
+        )}
+        {iv && groups.ok.length > 0 && (
+          <div className="hub-group">
+            <div className="hub-group-label hub-group-label--ok">COMPLETO</div>
+            <div className="hub-grid">{groups.ok.map(renderCard)}</div>
+          </div>
+        )}
+
+        {/* Chat con Gentil (secondary band — honest failures, real /chat) */}
+        <div className="hub-chat" data-hub-card="">
+          <div className="hub-chat-head">
+            <span className="hub-gentil-dot"/>
+            <span className="hub-gentil-label">Chat con Gentil</span>
+          </div>
+          <div className="hub-chat-stream" ref={chatRef}>
+            {chatMsgs.map((m, i) => (
+              <div key={i} className={`hub-msg ${m.role}`}>
+                <div className="hub-msg-bubble" dangerouslySetInnerHTML={renderMd(m.content)}/>
+              </div>
+            ))}
+            {chatLoading && <div className="hub-msg gentil"><div className="hub-msg-bubble hub-typing">Gentil está escribiendo<span className="d">…</span></div></div>}
+          </div>
+          <form className="hub-chat-form" onSubmit={sendChat}>
+            <input className="hub-input" type="text" value={chatInput} onChange={e => setChatInput(e.target.value)}
+                   placeholder="Pregúntale algo a Gentil…"/>
+            <button type="submit" className="hub-btn" disabled={chatLoading}>Enviar</button>
+          </form>
+        </div>
+
+        {/* Real ingestion: /strategy/ingest-resource (the cascade), never the chat */}
+        <div className="hub-upload" data-hub-card="">
+          <button className="hub-btn" onClick={() => fileRef.current && fileRef.current.click()} disabled={upload && upload.stage === 'proc'}>
+            Subir documento de estrategia
+          </button>
+          <input type="file" ref={fileRef} style={{ display:'none' }} onChange={handleUpload}
+                 accept=".pdf,.doc,.docx,.txt,.md,.xlsx,.xls,.csv,.pptx"/>
+          <span className="hub-upload-sub">activa la cascada real — llena múltiples paneles a la vez</span>
+          {upload && (
+            <div className={`hub-upload-status ${upload.stage}`}>
+              {upload.stage === 'proc' && <span className="hub-spinner"/>}
+              <span>{upload.text}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="hub-foot">
+          datos en vivo del api-gateway{latest && latest.asOf ? ` · caja real al ${latest.asOf}` : ''}{cajaData && cajaData.source && cajaData.source.fuente ? ` · fuente: ${cajaData.source.fuente}` : ''}
+        </div>
+      </div>
+
+      {/* ── Interview modal (per-domain, multi-row, verbatim 422 errors) ─────── */}
+      {modalDomain && (
+        <div className="hub-modal-scrim" onClick={() => setModalDomain(null)}>
+          <div className="hub-modal" onClick={e => e.stopPropagation()}>
+            <div className="hub-modal-head">
+              <div className="hub-card-id">
+                <span className="hub-ico big">{modalMeta.icon}</span>
+                <div>
+                  <div className="hub-modal-eyebrow">Especialista en {modalMeta.badge}</div>
+                  <div className="hub-modal-title">{modalMeta.title}</div>
+                </div>
+              </div>
+              <button className="hub-modal-x" onClick={() => setModalDomain(null)}>×</button>
+            </div>
+
+            <div className="hub-modal-q">
+              <p>«{modalQ && modalQ.pregunta ? modalQ.pregunta : 'Este dominio ya está completo — puedes revisar o ampliar sus datos.'}»</p>
+            </div>
+
+            {modalErr && <div className="hub-modal-err">⚠ {modalErr}</div>}
+            {modalOk && (
+              <div className="hub-modal-ok">
+                <span className="tick">✓</span>
+                <span>Registros integrados — el panel ya refleja este dato.</span>
+              </div>
+            )}
+
+            {!modalOk && modalDomain === 'liquidez' && (
+              <div className="hub-form">
+                <div className="hub-live-line">
+                  ¿Cuánto me queda? — {latest && latest.caja != null ? `$${latest.caja}M` : HUB_SIN_FUENTE}
+                  {latest && latest.asOf ? ` · saldo real al ${latest.asOf}` : ''}
+                  {cajaData && cajaData.source && cajaData.source.fuente ? ` · fuente: ${cajaData.source.fuente}` : ''}
+                </div>
+                <div className="hub-form-grid2">
+                  <label className="hub-label">Caja operativa (COP)
+                    {rowInput({ type:'number', value:liq.caja, onChange:e => setLiq(s => ({ ...s, caja:e.target.value })) })}
+                  </label>
+                  <label className="hub-label">Reservas estratégicas (COP)
+                    {rowInput({ type:'number', value:liq.reservas, onChange:e => setLiq(s => ({ ...s, reservas:e.target.value })) })}
+                  </label>
+                  <label className="hub-label">Crédito disponible (COP)
+                    {rowInput({ type:'number', value:liq.credito, onChange:e => setLiq(s => ({ ...s, credito:e.target.value })) })}
+                  </label>
+                  <label className="hub-label">Gasto mensual promedio — foto actual, no meta (COP)
+                    {rowInput({ type:'number', value:liq.gasto, onChange:e => setLiq(s => ({ ...s, gasto:e.target.value })) })}
+                  </label>
+                </div>
+                <div className="hub-form-note">«¿Cuánto debo?» y «¿cuánto me deben?» aún no tienen fuente conectada — {HUB_SIN_FUENTE}. Se activarán con el módulo de obligaciones.</div>
+              </div>
+            )}
+
+            {!modalOk && modalDomain === 'riesgos' && (
+              <div className="hub-form">
+                <div className="hub-radar-row">
+                  <span className={`hub-radar-status${radarErr ? ' err' : ''}`}>{radarErr || radarMsg || radarStatus()}</span>
+                  <button type="button" className="hub-btn-ghost" onClick={runRadar} disabled={radarRunning}>
+                    {radarRunning ? 'Analizando…' : 'Analizar ahora'}
+                  </button>
+                </div>
+                {riesgosRows.map(r => (
+                  <div key={r.id} className="hub-row-box">
+                    {rowInput({ type:'text', placeholder:'Descripción del riesgo', value:r.descripcion,
+                      onChange:e => setRiesgosRows(rows => rows.map(x => x.id === r.id ? { ...x, descripcion:e.target.value } : x)) })}
+                    <div className="hub-form-grid4">
+                      <select className="hub-input" value={r.area}
+                              onChange={e => setRiesgosRows(rows => rows.map(x => x.id === r.id ? { ...x, area:e.target.value } : x))}>
+                        {[...HUB_AREAS, 'Transversal'].map(a => <option key={a} value={a}>{a === 'Investigacion' ? 'Investigación' : a}</option>)}
+                      </select>
+                      {rowInput({ type:'number', min:1, max:5, placeholder:'Impacto 1-5', value:r.impacto,
+                        onChange:e => setRiesgosRows(rows => rows.map(x => x.id === r.id ? { ...x, impacto:e.target.value } : x)) })}
+                      {rowInput({ type:'number', min:1, max:5, placeholder:'Prob. 1-5', value:r.probabilidad,
+                        onChange:e => setRiesgosRows(rows => rows.map(x => x.id === r.id ? { ...x, probabilidad:e.target.value } : x)) })}
+                      <select className="hub-input" value={r.estado}
+                              onChange={e => setRiesgosRows(rows => rows.map(x => x.id === r.id ? { ...x, estado:e.target.value } : x))}>
+                        {HUB_RISK_ESTADOS.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+                <button type="button" className="hub-addrow"
+                        onClick={() => setRiesgosRows(rows => [...rows, { id:hubUid(), descripcion:'', area:'Comercial', impacto:3, probabilidad:3, estado:'monitoreado' }])}>
+                  + Añadir fila
+                </button>
+              </div>
+            )}
+
+            {!modalOk && modalDomain === 'roadmap' && (
+              <div className="hub-form">
+                {roadmapRows.map(r => (
+                  <div key={r.id} className="hub-row-box">
+                    {rowInput({ type:'text', placeholder:'Título del hito', value:r.titulo,
+                      onChange:e => setRoadmapRows(rows => rows.map(x => x.id === r.id ? { ...x, titulo:e.target.value } : x)) })}
+                    <div className="hub-form-grid2">
+                      <select className="hub-input" value={r.area}
+                              onChange={e => setRoadmapRows(rows => rows.map(x => x.id === r.id ? { ...x, area:e.target.value } : x))}>
+                        {HUB_AREAS.map(a => <option key={a} value={a}>{a === 'Investigacion' ? 'Investigación' : a}</option>)}
+                      </select>
+                      {rowInput({ type:'number', min:2024, max:2035, placeholder:'Año objetivo', value:r.anio,
+                        onChange:e => setRoadmapRows(rows => rows.map(x => x.id === r.id ? { ...x, anio:e.target.value } : x)) })}
+                    </div>
+                  </div>
+                ))}
+                <button type="button" className="hub-addrow"
+                        onClick={() => setRoadmapRows(rows => [...rows, { id:hubUid(), titulo:'', area:'Comercial', anio:'' }])}>
+                  + Añadir fila
+                </button>
+              </div>
+            )}
+
+            {!modalOk && modalDomain === 'kpi_areas' && (
+              <div className="hub-form">
+                {kpiRows.map((r, i) => (
+                  <div key={r.area} className="hub-row-box">
+                    <div className="hub-kpi-head">
+                      <span className="hub-pill-mono">{HUB_AREA_MONO[r.area]}</span>
+                      <strong>{r.area === 'Investigacion' ? 'Investigación' : r.area}</strong>
+                    </div>
+                    <div className="hub-form-grid3">
+                      {rowInput({ type:'text', placeholder:'KPI principal', value:r.label,
+                        onChange:e => setKpiRows(rows => rows.map((x, j) => j === i ? { ...x, label:e.target.value } : x)) })}
+                      {rowInput({ type:'number', placeholder:'Meta (número)', value:r.target,
+                        onChange:e => setKpiRows(rows => rows.map((x, j) => j === i ? { ...x, target:e.target.value } : x)) })}
+                      <select className="hub-input" value={r.period}
+                              onChange={e => setKpiRows(rows => rows.map((x, j) => j === i ? { ...x, period:e.target.value } : x))}>
+                        <option value="mensual">mensual</option>
+                        <option value="trimestral">trimestral</option>
+                        <option value="anual">anual</option>
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!modalOk && modalDomain === 'estrategia' && (
+              <div className="hub-form">
+                {estrategiaRows.map(r => (
+                  <div key={r.id} className="hub-row-box">
+                    <div className="hub-form-grid2">
+                      {rowInput({ type:'text', placeholder:'Código único (ej. COM-1)', value:r.codigo,
+                        onChange:e => setEstrategiaRows(rows => rows.map(x => x.id === r.id ? { ...x, codigo:e.target.value } : x)) })}
+                      {rowInput({ type:'text', placeholder:'Meta estratégica', value:r.titulo,
+                        onChange:e => setEstrategiaRows(rows => rows.map(x => x.id === r.id ? { ...x, titulo:e.target.value } : x)) })}
+                    </div>
+                    <div className="hub-form-grid2">
+                      <select className="hub-input" value={r.area}
+                              onChange={e => setEstrategiaRows(rows => rows.map(x => x.id === r.id ? { ...x, area:e.target.value } : x))}>
+                        {[...HUB_AREAS, 'Transversal'].map(a => <option key={a} value={a}>{a === 'Investigacion' ? 'Investigación' : a}</option>)}
+                      </select>
+                      {rowInput({ type:'number', min:0, max:100, placeholder:'Peso %', value:r.peso,
+                        onChange:e => setEstrategiaRows(rows => rows.map(x => x.id === r.id ? { ...x, peso:e.target.value } : x)) })}
+                    </div>
+                    <div className="hub-form-grid2">
+                      <label className="hub-label">Fecha inicio
+                        {rowInput({ type:'date', value:r.fechaInicio,
+                          onChange:e => setEstrategiaRows(rows => rows.map(x => x.id === r.id ? { ...x, fechaInicio:e.target.value } : x)) })}
+                      </label>
+                      <label className="hub-label">Fecha fin (meta)
+                        {rowInput({ type:'date', value:r.fechaFin,
+                          onChange:e => setEstrategiaRows(rows => rows.map(x => x.id === r.id ? { ...x, fechaFin:e.target.value } : x)) })}
+                      </label>
+                    </div>
+                  </div>
+                ))}
+                <button type="button" className="hub-addrow"
+                        onClick={() => setEstrategiaRows(rows => [...rows, { id:hubUid(), codigo:'', titulo:'', area:'Comercial', peso:'', fechaInicio:'', fechaFin:'' }])}>
+                  + Añadir fila
+                </button>
+              </div>
+            )}
+
+            {!modalOk && (modalDomain === 'planes' || modalDomain === 'tareas') && (
+              <p className="hub-confirm-text">Gentil ya estructuró la línea base a partir de tu estrategia. Confirma para marcar este dominio como revisado.</p>
+            )}
+
+            {!modalOk && (
+              <button className="hub-btn hub-btn--submit" onClick={() => submitDomain(modalDomain)} disabled={submitting}>
+                {submitting ? 'Integrando…' : 'Sintetizar e integrar →'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
+/* ============================================================
    APP
    ============================================================ */
-function App(){
+function App() {
   const [theme, setTheme] = useState(()=> localStorage.getItem('cm11-theme') || 'light');
   const [period, setPeriod] = useState('Hoy');
   const [branch, setBranch] = useState(null);
@@ -2536,12 +3948,18 @@ function App(){
   const [sidebar, setSidebar] = useState(false);
   const [captura, setCaptura] = useState(false);
   const [stkModal, setStkModal] = useState(false);
-  const [stkEdit, setStkEdit] = useState(null); // null or contact object for editing
+  const [stkEdit, setStkEdit] = useState(null);
   const [projects, setProjects] = useState(false);
   const [inbox, setInbox] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [interviewModalOpen, setInterviewModalOpen] = useState(false);
+  const [unlockedHub, setUnlockedHub] = useState(false);
 
-  // Expose project opener for rail button
+  const interviewData = useApiData('interview');
+  const milestones = useApiData('milestones');
+
+  const hasActiveStrategy = (Array.isArray(milestones) && milestones.length > 0) || (interviewData && interviewData.completitud_pct === 100);
+
   useEffect(()=>{ window.__openProjects = ()=>setProjects(true); return ()=>{ delete window.__openProjects; }; },[]);
 
   useEffect(()=>{
@@ -2549,35 +3967,35 @@ function App(){
     localStorage.setItem('cm11-theme', theme);
   },[theme]);
 
-  // Carga bandeja de entrada desde la BD al montar
   useEffect(()=>{
-    const k = window.__API_KEY__ || '';
-    const b = (window.__API_BASE__ || '').replace(/\/$/,'');
-    fetch(`${b}/inbox?procesado=false`, k ? {headers:{'X-API-Key':k}} : {})
-      .then(r => r.ok ? r.json() : [])
-      .then(list => setInbox(list.map(item=>({
-        id: item.id, type: item.tipo, text: item.texto,
-        date: new Date(item.created_at).toLocaleDateString('es-CO',{day:'numeric',month:'short'}),
-        from: item.origen,
-      }))))
-      .catch(()=>{});
+    (window.__CM_KEY_READY__ || Promise.resolve(window.__API_KEY__||'')).then(k=>{
+      const b = (window.__API_BASE__ || '/api').replace(/\/$/, '');
+      fetch(`${b}/inbox?procesado=false`, k ? {headers:{'X-API-Key':k}} : {})
+        .then(r => r.ok ? r.json() : [])
+        .then(list => setInbox(list.map(item=>({
+          id: item.id, type: item.tipo, text: item.texto,
+          date: new Date(item.created_at).toLocaleDateString('es-CO',{day:'numeric',month:'short'}),
+          from: item.origen,
+        }))))
+        .catch(()=>{});
+    });
   },[]);
 
-  // Carga stakeholders desde la BD al montar
   useEffect(()=>{
-    const k = window.__API_KEY__ || '';
-    const b = (window.__API_BASE__ || '').replace(/\/$/,'');
-    fetch(`${b}/stakeholders?limit=100`, k ? {headers:{'X-API-Key':k}} : {})
-      .then(r => r.ok ? r.json() : [])
-      .then(list => setContacts(list.map(_adaptStk)))
-      .catch(()=>{});
+    (window.__CM_KEY_READY__ || Promise.resolve(window.__API_KEY__||'')).then(k=>{
+      const b = (window.__API_BASE__ || '/api').replace(/\/$/, '');
+      fetch(`${b}/stakeholders?limit=500`, k ? {headers:{'X-API-Key':k}} : {})
+        .then(r => r.ok ? r.json() : [])
+        .then(list => setContacts(list.map(_adaptStk)))
+        .catch(()=>{});
+    });
   },[]);
 
   const addCaptura = async (text) => {
     const tempId = Date.now();
     setInbox(prev => [{ id:tempId, type:'note', text, date:'Hoy', from:'Captura rápida' }, ...prev]);
     const k = window.__API_KEY__ || '';
-    const b = (window.__API_BASE__ || '').replace(/\/$/,'');
+    const b = (window.__API_BASE__ || '').replace(/\/$/, '');
     try {
       const r = await fetch(`${b}/inbox`,{
         method:'POST',
@@ -2585,7 +4003,7 @@ function App(){
         body:JSON.stringify({tipo:'note',texto:text,origen:'Captura rápida'}),
       });
       if(r.ok){ const s=await r.json(); setInbox(prev=>prev.map(i=>i.id===tempId?{...i,id:s.id}:i)); }
-    } catch(e){}
+    } catch(e) { console.error('Error guardando nota de inbox:', e); }
   };
   const _adaptStk = s => ({
     id: s.id,
@@ -2601,7 +4019,7 @@ function App(){
   });
   const addStakeholder = async (s) => {
     const k = window.__API_KEY__ || '';
-    const b = (window.__API_BASE__ || '').replace(/\/$/,'');
+    const b = (window.__API_BASE__ || '').replace(/\/$/, '');
     const h = {'Content-Type':'application/json',...(k?{'X-API-Key':k}:{})};
     const payload = {
       nombre: s.name,
@@ -2625,12 +4043,33 @@ function App(){
   };
   const editStakeholder = (c) => { setStkEdit(c); setStkModal(true); };
 
+  const wallRef = React.useRef(null);
+  React.useLayoutEffect(()=>{
+    if(!window.__fx) return;
+    const a = window.__fx.enter(wallRef.current, '.stage > *', { y:16, stagger:0.07, d:0.55 });
+    const b = window.__fx.enter(wallRef.current, '.rail > *', { y:14, stagger:0.06, d:0.5, delay:0.15 });
+    return ()=>{ a && a.revert(); b && b.revert(); };
+  },[]);
+
+  if (!hasActiveStrategy && !unlockedHub) {
+    // change rebuild-onboarding-hub: the hub owns its interview modal and top bar; it consumes the
+    // real /api/interview payload (now fetched by api-client.js) and brand tokens, not a foreign palette.
+    return (
+      <OnboardingHub
+        interview={interviewData}
+        theme={theme}
+        onTheme={()=>setTheme(t=>t==='dark'?'light':'dark')}
+        onUnlock={() => setUnlockedHub(true)}
+      />
+    );
+  }
+
   return (
     <>
       <Header theme={theme} onTheme={()=>setTheme(t=>t==='dark'?'light':'dark')} onOpenClaw={()=>setClaw(true)} onUpload={()=>setModal('dim')} onMenu={()=>setSidebar(true)}/>
       <SubHeader period={period} setPeriod={setPeriod}
         onRoadmap={()=>setModal('roadmap')} onVision={()=>setModal('vision')}/>
-      <main className="wall">
+      <main className="wall" ref={wallRef}>
         <section className="stage" data-screen-label="01 Panel General">
           <div className="stage-title">
             <div className="stage-title-row">
@@ -2638,7 +4077,8 @@ function App(){
             </div>
             <span className="stage-meta tabular">PERIODO · {period.toUpperCase()}</span>
           </div>
-          <KPIs onOpen={(k)=>setModal('kpi-'+k)}/>
+          <InterviewBanner interview={interviewData} onOpen={() => setInterviewModalOpen(true)} />
+          <KPIs onOpen={(k)=>setModal('kpi-'+k)} period={period}/>
           <Lectura/>
           <div className="grid-2">
             <Execution/>
@@ -2650,9 +4090,10 @@ function App(){
       </main>
 
       <ClawDrawer open={claw} onClose={()=>setClaw(false)}/>
+      <InterviewModal open={interviewModalOpen} onClose={() => setInterviewModalOpen(false)} interview={interviewData} onRefresh={() => window.location.reload()} />
 
       <Modal open={modal==='roadmap'} onClose={()=>setModal(null)}
-             eye="HOJA DE RUTA" title={<>Lo que viene en <em>2026</em></>}>
+             eye="HOJA DE RUTA" title={<>Lo que viene en <em>{window.__CM_ROADMAP_ANIO__ || '—'}</em></>}>
         <RoadmapContent/>
       </Modal>
       <Modal open={modal==='vision'} onClose={()=>setModal(null)}

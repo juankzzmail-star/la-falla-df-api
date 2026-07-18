@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, List, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ─── Strategic Goals ─────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ class GoalBase(BaseModel):
     fecha_fin_meta: Optional[date] = None
     peso_porcentaje: Optional[float] = None
     estado: str = "activo"
+    milestone_id: Optional[int] = None   # meta-de-hito -> its company HITO (unify-strategy-execution)
 
 
 class GoalCreate(GoalBase):
@@ -26,6 +27,7 @@ class GoalUpdate(BaseModel):
     fecha_fin_meta: Optional[date] = None
     peso_porcentaje: Optional[float] = None
     estado: Optional[str] = None
+    milestone_id: Optional[int] = None
 
 
 class GoalOut(GoalBase):
@@ -57,6 +59,8 @@ class PlanBase(BaseModel):
     area: str
     goal_id: Optional[int] = None
     responsable: Optional[str] = None
+    anio: Optional[int] = None          # annual cycle dimension (unify-strategy-execution)
+    ciclo_id: Optional[int] = None
     fecha_inicio: Optional[date] = None
     fecha_fin_planificada: Optional[date] = None
     estado: str = "activo"
@@ -71,6 +75,8 @@ class PlanUpdate(BaseModel):
     area: Optional[str] = None
     goal_id: Optional[int] = None
     responsable: Optional[str] = None
+    anio: Optional[int] = None
+    ciclo_id: Optional[int] = None
     fecha_inicio: Optional[date] = None
     fecha_fin_planificada: Optional[date] = None
     estado: Optional[str] = None
@@ -90,6 +96,77 @@ class PlanOut(PlanBase):
     model_config = {"from_attributes": True}
 
 
+# ─── Strategy cascade (change strategy-cascade) ───────────────────────────────
+
+class GeneratePlansRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    goal_ids: List[int]
+
+
+class GeneratePlansResponse(BaseModel):
+    planes_creados: int
+    planes_actualizados: int
+    plans: List[PlanOut]
+
+
+class PlanApproveResponse(BaseModel):
+    plan_id: int
+    estado: str
+    tareas_creadas: int
+    responsable: Optional[str] = None
+
+
+# ─── Plan quarterly goals (change plan-quarterly-milestones) ──────────────────
+# The quarter (Q1–Q4) lives on the PLAN, not the hito (model §12, D9). The per-quarter `pct` is
+# DERIVED from real task completion at read time and is never stored (D10, option C).
+
+class QuarterlyGoalIn(BaseModel):
+    trimestre: int = Field(..., ge=1, le=4)
+    meta: str
+    objetivo_medible: Optional[str] = None
+
+
+class QuarterlyGoalOut(BaseModel):
+    trimestre: int
+    meta: Optional[str] = None
+    objetivo_medible: Optional[str] = None
+    pct: Optional[float] = None          # DERIVED; None means "sin datos" (no contributing work)
+
+
+class PlanQuartersIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    quarters: List[QuarterlyGoalIn]
+
+
+class PlanQuartersOut(BaseModel):
+    plan_id: int
+    area: Optional[str] = None
+    quarters: List[QuarterlyGoalOut]
+
+
+# ─── Hito roll-up linkage (change populate-hito-rollup) ───────────────────────
+
+class MilestoneLinkIn(BaseModel):
+    """PUT body to set/change/clear a meta-de-hito's hito link. null clears the link."""
+    model_config = ConfigDict(extra="forbid")
+    milestone_id: Optional[int] = None
+
+
+class MetaHitoLink(BaseModel):
+    meta_id: int
+    codigo: Optional[str] = None
+    milestone_id: Optional[int] = None
+    hito_titulo: Optional[str] = None
+
+
+class LinkMetasHitosOut(BaseModel):
+    estado: str                              # "linked" | "sin_hitos" (honest empty)
+    linked: int                              # number of metas linked this run
+    mensaje: Optional[str] = None            # human-readable note (e.g. "no hay hitos para enlazar")
+    links: List[MetaHitoLink] = []
+    hitos_recomputados: List[int] = []       # ids of hitos whose pct was recomputed
+
+
 # ─── Tasks ───────────────────────────────────────────────────────────────────
 
 class TaskBase(BaseModel):
@@ -105,6 +182,11 @@ class TaskBase(BaseModel):
     peso_pct: float = 0
     url_entregable: Optional[str] = None
     stakeholder_id: Optional[int] = None
+    # change unify-strategy-execution: two origins + EDT/project/hito links.
+    origen: str = "directa"             # directa | proyecto
+    project_id: Optional[int] = None
+    edt_node_id: Optional[int] = None   # fixes prior ORM<->schema drift (was unassignable via API)
+    milestone_id: Optional[int] = None  # optional hito override (the ~20% rule)
 
 
 class TaskCreate(TaskBase):
@@ -123,9 +205,15 @@ class TaskUpdate(BaseModel):
     peso_pct: Optional[float] = None
     url_entregable: Optional[str] = None
     motivo_bloqueo: Optional[str] = None
-    google_task_id: Optional[str] = None
-    google_calendar_event_id: Optional[str] = None
+    # google_task_id / google_calendar_event_id are backend-owned: populated by the
+    # routing/sync paths, never by user edits. Exposing them here let update_task's
+    # blind setattr overwrite the keys sync_google reconciles by (mass-assignment).
     stakeholder_id: Optional[int] = None
+    # change unify-strategy-execution
+    origen: Optional[str] = None
+    project_id: Optional[int] = None
+    edt_node_id: Optional[int] = None
+    milestone_id: Optional[int] = None
 
 
 class TaskBlockRequest(BaseModel):

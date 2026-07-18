@@ -1,7 +1,8 @@
 import os
+import re
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
@@ -103,7 +104,8 @@ def create_flow(body: FlowCreate, db: Session = Depends(get_db)):
 # ─── Google Sheets sync ───────────────────────────────────────────────────────
 
 class SheetSyncPayload(BaseModel):
-    """Payload que envía n8n después de leer el Google Sheet de Quinaya."""
+    """Payload con datos del libro de caja real (MOVIMIENTOS 2026, lo lleva el Director Comercial y
+    Financiero). Históricamente lo empujaba n8n; ahora se deposita desde el libro real."""
     fuente: str = "Google Sheets"         # nombre descriptivo de la hoja
     spreadsheet_id: Optional[str] = None  # ID del spreadsheet (para tracking)
     snapshot: Optional[SnapshotCreate] = None
@@ -185,6 +187,53 @@ def sync_from_sheets(body: SheetSyncPayload):
         "snapshot_id": snapshot_id,
         "flows_created": flows_created,
     }
+
+
+# ─── Instant-push webhook (router SEPARADO, sin la API key global; valida su propio token) ────────────
+# change real-financial-source (push): el Apps Script onEdit de MOVIMIENTOS 2026 golpea esto apenas Juan
+# Carlos edita la hoja -> re-lectura instantánea, sin polling. Token propio en app_config (no env), para
+# que un visitante con la API key pública (/config) NO pueda dispararlo.
+
+webhook_router = APIRouter(prefix="/hooks", tags=["webhooks"])
+
+
+def _app_config(db: Session, key: str) -> Optional[str]:
+    try:
+        r = db.execute(text("SELECT value FROM app_config WHERE key=:k"), {"k": key}).fetchone()
+        return r[0] if r else None
+    except Exception:
+        return None
+
+
+@webhook_router.post("/financial-sheets")
+def financial_sheets_webhook(token: str = Query(""), sheet: str = Query(""), db: Session = Depends(get_db)):
+    """`sheet` = ID del archivo que reporta el Google Drive Trigger de n8n (al crearse/editarse un Excel en
+    la carpeta financiera). Si viene, el tablero lee ESE archivo y se re-apunta a él -> al llegar el
+    MOVIMIENTOS del año nuevo, lo sigue solo. Sin `sheet`, usa el último configurado."""
+    expected = _app_config(db, "finance_webhook_token")
+    if not expected:
+        raise HTTPException(503, "Webhook financiero no configurado (falta finance_webhook_token).")
+    if not token or token != expected:
+        raise HTTPException(401, "token inválido")
+    sheet = (sheet or "").strip()
+    if sheet and not re.match(r"^[A-Za-z0-9_-]{20,}$", sheet):
+        raise HTTPException(400, "sheet id inválido")
+    src = db.execute(text(
+        "SELECT spreadsheet_id, ultima_sincronizacion FROM financial_data_sources "
+        "WHERE spreadsheet_id IS NOT NULL ORDER BY ultima_sincronizacion DESC LIMIT 1"
+    )).fetchone()
+    sid = sheet or (src[0] if src else None)
+    last = src[1] if src else None
+    if not sid:
+        raise HTTPException(422, "no hay spreadsheet configurado (ni en la petición ni en la BD)")
+    if last is not None:  # throttle: las ráfagas de cambios no martillan la Sheets API
+        try:
+            if (datetime.now(timezone.utc) - last).total_seconds() < 15:
+                return {"ok": True, "throttled": True}
+        except Exception:
+            pass
+    from ._gsheets_finance import import_movimientos
+    return import_movimientos(db, sid)
 
 
 @router.get("/data-sources")

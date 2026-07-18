@@ -113,6 +113,66 @@ def stakeholder_stats(db: Session = Depends(get_db)):
     return dict(rows._mapping)
 
 
+# ─── Stakeholder impact analysis (change stakeholder-impact) ───────────────────
+# Deterministic decision-text -> affected classifications map. Replaces the dormant governance-skill
+# heuristic that returned hardcoded names; this resolves REAL stakeholders from stakeholders_master.
+_IMPACT_RULES = [
+    ("Institucional / Gobierno", ("mincultura", "ministerio", "convocatoria", "fondo", "gobernación",
+                                  "gobernacion", "alcaldía", "alcaldia", "público", "publico", "estatal",
+                                  "proimágenes", "proimagenes", "estímulo", "estimulo", "subsidio", "ley")),
+    ("Clientes", ("cliente", "ingreso", "venta", "contrato", "factura", "canal", "marca", "pauta",
+                  "patrocinio", "patrocinador", "comercial")),
+    ("Aliados", ("alianza", "aliado", "acmi", "comisión fílmica", "comision filmica", "coproducción",
+                 "coproduccion", "colaboración", "colaboracion", "gremio", "productora")),
+    ("Proveedores (Locaciones)", ("proveedor", "locación", "locacion", "alquiler", "renta de equipo",
+                                  "logística", "logistica")),
+]
+
+
+def relevant_classifications(decision: str) -> List[str]:
+    """Map a decision's text to the stakeholder classifications it likely affects (deterministic)."""
+    d = (decision or "").lower()
+    return [cls for cls, kws in _IMPACT_RULES if any(k in d for k in kws)]
+
+
+class ImpactRequest(BaseModel):
+    decision: str
+    area: Optional[str] = None
+    limit: int = 30
+
+
+@router.post("/impact-analysis")
+def stakeholder_impact(body: ImpactRequest, db: Session = Depends(get_db)):
+    """Cross-reference a decision against the REAL stakeholders_master and list who it affects, by the
+    classifications the decision touches — real names from the directory, not hardcoded guesses
+    (change stakeholder-impact)."""
+    decision = (body.decision or "").strip()
+    if not decision:
+        raise HTTPException(400, "Falta el texto de la decisión.")
+    classes = relevant_classifications(decision)
+    items: list = []
+    if classes:
+        rows = db.execute(text(
+            "SELECT id, nombre, rol, clasificacion_negocio, correo, observaciones "
+            "FROM stakeholders_master WHERE (activo = true OR activo IS NULL) "
+            "AND clasificacion_negocio = ANY(:classes) ORDER BY nombre NULLS LAST LIMIT :limit"
+        ), {"classes": classes, "limit": min(int(body.limit), 100)}).fetchall()
+        items = [{k: v for k, v in dict(r._mapping).items() if v is not None} for r in rows]
+    return {
+        "decision": decision[:200],
+        "classifications_touched": classes,
+        "affected_count": len(items),
+        "affected_stakeholders": items,
+        "recommendation": (
+            "Alto impacto — considera comunicación proactiva con los stakeholders listados."
+            if len(items) >= 3 else
+            "Impacto limitado — revisa los stakeholders listados."
+            if items else
+            "No se identificaron stakeholders directamente afectados en el directorio para esta decisión."
+        ),
+    }
+
+
 @router.get("", response_model=List[StakeholderOut])
 def list_stakeholders(
     search: Optional[str] = None,

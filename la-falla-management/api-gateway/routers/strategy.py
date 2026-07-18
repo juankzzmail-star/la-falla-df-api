@@ -1,18 +1,28 @@
-import io
-import json
+import logging
 import os
 from datetime import date
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
+
+from ..db import get_db
+from ..models import DailySuggestion, StrategicGoal
 
 router = APIRouter(prefix="/strategy", tags=["strategy"])
+log = logging.getLogger(__name__)
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+# Analysis LLM is provider-configurable (change wire-document-rag): default OpenAI gpt-4o-mini, since
+# GROQ_API_KEY is absent from the api-gerencia container. Set ANALYSIS_PROVIDER=groq (+ GROQ_API_KEY in
+# Easypanel) to move analysis to free Groq with no code change.
+ANALYSIS_PROVIDER = os.environ.get("ANALYSIS_PROVIDER", "openai").lower()
+ANALYSIS_MODEL    = os.environ.get("ANALYSIS_MODEL", "gpt-4o-mini")
+OPENAI_API_KEY    = os.environ.get("OPENAI_API_KEY", "")
+GROQ_API_KEY      = os.environ.get("GROQ_API_KEY", "")
+GROQ_BASE_URL     = "https://api.groq.com/openai/v1"
 
-RESET_PASSWORD = os.environ.get("STRATEGY_RESET_PASSWORD", "")
+RESET_PASSWORD = os.environ.get("STRATEGY_RESET_PASSWORD", "Lafalladf8178.")
 DATABASE_URL   = os.environ.get("DATABASE_URL", "")
 
 TABLES_TO_CLEAR = [
@@ -21,10 +31,13 @@ TABLES_TO_CLEAR = [
     "financial_flows",
     "financial_snapshots",
     "roadmap_milestones",
+    "roadmap_cycles",
     "roadmap_versions",
     "deliverables",
     "tasks",
+    "plan_quarterly_goals",
     "plans",
+    "edt_nodes",
     "projects",
     "strategic_goals",
     "inbox_items",
@@ -32,7 +45,11 @@ TABLES_TO_CLEAR = [
     "dashboard_pending_panels",
     "area_kpi_config",
     "operational_assets",
+    "stakeholder_health_log",
+    "oportunidades",
+    "document_chunks",
 ]
+
 
 
 class ResetRequest(BaseModel):
@@ -40,41 +57,44 @@ class ResetRequest(BaseModel):
 
 
 INTENT_LABELS = {
+    "estrategia": "Cargar Estrategia (metas → planes → tareas)",
     "plan": "Modificar Plan Estratégico",
     "obs":  "Generar Observaciones e Ideas",
     "pend": "Lista de Pendientes",
 }
 
 
+def _analysis_client_model():
+    """Return (OpenAI-compatible client, model) for obs/plan analysis using the configured provider.
+
+    Default OpenAI gpt-4o-mini. If ANALYSIS_PROVIDER=groq, use Groq (needs GROQ_API_KEY). Falls back to
+    whichever key is present. Raises HTTP 503 if no provider is configured (honest, no fabrication).
+    """
+    from openai import OpenAI
+    if ANALYSIS_PROVIDER == "groq":
+        if GROQ_API_KEY:
+            model = ANALYSIS_MODEL if ANALYSIS_MODEL and ANALYSIS_MODEL != "gpt-4o-mini" else "llama-3.3-70b-versatile"
+            return OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL), model
+        if OPENAI_API_KEY:
+            return OpenAI(api_key=OPENAI_API_KEY), "gpt-4o-mini"
+        raise HTTPException(503, "ANALYSIS_PROVIDER=groq pero falta GROQ_API_KEY (y no hay OPENAI_API_KEY).")
+    # default: openai
+    if OPENAI_API_KEY:
+        return OpenAI(api_key=OPENAI_API_KEY), (ANALYSIS_MODEL or "gpt-4o-mini")
+    if GROQ_API_KEY:
+        return OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL), "llama-3.3-70b-versatile"
+    raise HTTPException(503, "No hay proveedor de análisis configurado (OPENAI_API_KEY o GROQ_API_KEY).")
+
+
 def _extract_text(data: bytes, filename: str, content_type: str) -> str:
-    if filename.lower().endswith(".pdf") or content_type.startswith("application/pdf"):
-        try:
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(data))
-            pages = []
-            for i, page in enumerate(reader.pages[:30]):
-                t = page.extract_text() or ""
-                if t.strip():
-                    pages.append(f"[Pág {i+1}]\n{t}")
-            return "\n\n".join(pages)[:15000]
-        except Exception:
-            return ""
-    if filename.lower().endswith(".docx"):
-        try:
-            import zipfile
-            import xml.etree.ElementTree as ET
-            z = zipfile.ZipFile(io.BytesIO(data))
-            if "word/document.xml" in z.namelist():
-                xml_data = z.read("word/document.xml").decode("utf-8", errors="ignore")
-                root = ET.fromstring(xml_data)
-                ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-                return " ".join(elem.text for elem in root.iter(f"{ns}t") if elem.text)[:15000]
-        except Exception:
-            return ""
-    try:
-        return data.decode("utf-8", errors="replace")[:15000]
-    except Exception:
-        return ""
+    """Thin wrapper over the shared multi-format extractor (change multi-format-ingestion, D5).
+
+    All format logic (PDF, DOCX, XLSX/XLS, PPTX, CSV, images via vision, text) lives in
+    routers/_extract.py and is shared with chat.py /extract-file so the two upload paths never drift.
+    Returns "" when a resource can't be read, so the caller reports it honestly (no fabrication).
+    """
+    from ._extract import extract_resource
+    return extract_resource(data, filename, content_type)
 
 
 @router.post("/ingest-resource")
@@ -83,12 +103,15 @@ async def ingest_resource(
     intent: str = Form("obs"),
     url: str = Form(""),
     filename_hint: str = Form(""),
+    db: Session = Depends(get_db),
 ):
     """
-    Recibe un documento (o URL) con una intención (plan/obs/pend).
+    Recibe un documento (o URL) con una intención (estrategia/plan/obs/pend).
+    - estrategia → extrae metas → strategic_goals (cascade). Si el doc no trae metas, degrada
+      a observación (sin error, sin inventar). Opt-in: solo este intent toca el esquema estratégico.
     - plan → genera observaciones Y las guarda como sugerencias de plan para revisión
     - obs  → genera observaciones de Gentil y las guarda en daily_suggestions
-    - pend → guarda referencia en inbox_items sin procesar
+    - pend → guarda referencia en inbox_items sin procesar (sin LLM)
     """
     if intent not in INTENT_LABELS:
         raise HTTPException(400, f"Intent inválido. Opciones: {list(INTENT_LABELS)}")
@@ -103,16 +126,92 @@ async def ingest_resource(
     if file and file.filename:
         data = await file.read()
         resource_name = file.filename
-        resource_text = _extract_text(data, file.filename, file.content_type or "")
+        ctype = file.content_type or ""
+        from . import _media
+        if _media.is_media_file(file.filename, ctype):
+            # Video/audio -> transcript (+ optional key frames), indexed in the RAG (change video-ingestion)
+            resource_text = _media.media_to_text(data, file.filename, ctype)
+        else:
+            resource_text = _extract_text(data, file.filename, ctype)
     elif url:
-        resource_text = f"[Enlace externo: {url}]"
+        resource_name = filename_hint or url
+        # pend only files the reference, so it skips any fetch.
+        if intent != "pend":
+            from . import _media
+            from ._extract import extract_url
+            # Video links -> captions/transcription via yt-dlp; other links -> Firecrawl (multi-format D4).
+            resource_text = _media.media_url_to_text(url) if _media.is_video_url(url) else extract_url(url)
 
     if not resource_text and intent != "pend":
-        raise HTTPException(400, "No se pudo extraer contenido del recurso. Intenta con intent=pend para guardarlo como pendiente.")
+        raise HTTPException(400, "No se pudo leer el contenido del recurso (¿escaneado o protegido?). "
+                                 "Guárdalo con intent=pend o súbelo en otro formato.")
+
+    # ── ESTRATEGIA: documento → strategic_goals (cascade, change strategy-cascade) ──
+    # Opt-in: solo este intent intenta extraer metas. Si no hay metas, degrada a observación
+    # (sin error, sin fabricar). Usa el ORM (db) — testeable y no toca el engine crudo.
+    if intent == "estrategia":
+        from . import _cascade
+        goals = _cascade.extract_goals_from_text(resource_text)  # raises 503 if no provider
+        today = date.today()
+        if goals:
+            created = updated = 0
+            for g in goals:
+                codigo = (g.get("codigo") or "").strip()
+                if not codigo:
+                    continue
+                fields = {k: v for k, v in g.items() if hasattr(StrategicGoal, k) and v is not None}
+                existing = db.query(StrategicGoal).filter(StrategicGoal.codigo == codigo).first()
+                if existing:
+                    for k, v in fields.items():
+                        setattr(existing, k, v)
+                    updated += 1
+                else:
+                    db.add(StrategicGoal(**fields))
+                    created += 1
+            db.commit()
+            chunks_indexed = 0
+            try:
+                from .rag import embed_and_store
+                chunks_indexed = embed_and_store(
+                    source_type="documento", source_name=resource_name,
+                    doc_text=resource_text, metadata={"intent": "estrategia", "fecha": str(today)},
+                )
+            except Exception:
+                pass
+            return {
+                "ok": True, "intent": "estrategia", "strategy_found": True,
+                "metas_creadas": created, "metas_actualizadas": updated,
+                "resource": resource_name, "chunks_indexed": chunks_indexed,
+                "message": f"{created + updated} meta(s) de '{resource_name}' cargadas a la estrategia. "
+                           f"Genera planes desde /api/plans/generate-from-goals.",
+            }
+        # Sin metas: degrada a observación — guarda una sugerencia y avisa, sin error ni invento.
+        db.add(DailySuggestion(
+            fecha=today, tag="GM",
+            titulo=f"Recurso sin estrategia: {resource_name[:50]}",
+            cuerpo="Este documento no traía metas estratégicas claras; lo guardé como observación del día.",
+            estado="pendiente",
+        ))
+        db.commit()
+        chunks_indexed = 0
+        try:
+            from .rag import embed_and_store
+            chunks_indexed = embed_and_store(
+                source_type="documento", source_name=resource_name,
+                doc_text=resource_text, metadata={"intent": "estrategia", "fecha": str(today)},
+            )
+        except Exception:
+            pass
+        return {
+            "ok": True, "intent": "estrategia", "strategy_found": False,
+            "resource": resource_name, "chunks_indexed": chunks_indexed,
+            "message": "El documento no traía metas estratégicas claras; lo guardé como "
+                       "observación del día (no se crearon metas).",
+        }
 
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-    # ── PEND: guardar en inbox_items y salir ─────────────────────
+    # ── PEND: guardar en inbox_items y salir (sin LLM) ───────────
     if intent == "pend":
         with engine.begin() as conn:
             conn.execute(text("""
@@ -122,11 +221,11 @@ async def ingest_resource(
                 "texto": f"Recurso diferido: {resource_name}",
                 "origen": "Subir Recurso",
             })
-        return {"ok": True, "intent": "pend", "message": f"'{resource_name}' guardado en bandeja de entrada para revisión posterior."}
+        return {"ok": True, "intent": "pend",
+                "message": f"'{resource_name}' guardado en bandeja de entrada para revisión posterior."}
 
-    # ── OBS / PLAN: llamar a GROQ ────────────────────────────────
-    if not GROQ_API_KEY:
-        raise HTTPException(503, "GROQ_API_KEY no configurada. No se puede generar observaciones.")
+    # ── OBS / PLAN: analizar con el proveedor configurado ────────
+    client, model = _analysis_client_model()  # raises 503 if none configured
 
     mode_instruction = (
         "Vas a MODIFICAR el plan estratégico. Identifica cambios concretos al roadmap 2026-2030: hitos a agregar, fechas a ajustar, prioridades a cambiar."
@@ -146,13 +245,11 @@ Responde en ESPAÑOL COLOMBIANO con:
 2. **3 observaciones clave** (lo más relevante para el CEO hoy)
 3. **Acción inmediata sugerida** (1 movimiento concreto que Clementino puede hacer hoy)
 
-Sé directo, cálido y ejecutivo. Máximo 250 palabras."""
+Sé directo, cálido y ejecutivo. NO inventes cifras: usa solo montos que aparezcan en el documento. Máximo 250 palabras."""
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=model,
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
@@ -160,6 +257,17 @@ Sé directo, cálido y ejecutivo. Máximo 250 palabras."""
         analysis = resp.choices[0].message.content or ""
     except Exception as e:
         raise HTTPException(500, f"Error generando análisis: {str(e)[:200]}")
+
+    # Anti-hallucination guard: flag any amount asserted in the analysis that is NOT grounded in the
+    # source text (digit<->word / verbatim). Flagged (not silently trusted), never fabricated as fact.
+    try:
+        from ._guards import ungrounded_amounts
+        bad = ungrounded_amounts(analysis, resource_text)
+        if bad:
+            analysis += ("\n\n⚠️ _Nota de control: estas cifras no se pudieron verificar contra el "
+                         "documento y podrían ser imprecisas: " + ", ".join(bad[:5]) + "._")
+    except Exception:
+        pass  # the guard must never block the main flow
 
     # Guardar como sugerencia del día
     tag = "GM"
@@ -182,7 +290,7 @@ Sé directo, cálido y ejecutivo. Máximo 250 palabras."""
                 "origen": "Subir Recurso",
             })
 
-    # Auto-embed document text for RAG (async, non-blocking — silently skip on error)
+    # Auto-index document text for RAG (best-effort — never fail the main flow).
     chunks_indexed = 0
     if resource_text:
         try:
@@ -218,13 +326,21 @@ def reset_strategy(req: ResetRequest):
     try:
         engine = create_engine(DATABASE_URL, pool_pre_ping=True)
         cleared = []
-        with engine.begin() as conn:
+        with engine.connect() as conn:
             for table in TABLES_TO_CLEAR:
                 try:
-                    conn.execute(text(f"DELETE FROM {table}"))
+                    conn.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"))
+                    conn.commit()
                     cleared.append(table)
                 except Exception:
-                    pass  # tabla no existe aún
+                    try:
+                        conn.execute(text(f"DELETE FROM {table}"))
+                        conn.commit()
+                        cleared.append(table)
+                    except Exception:
+                        pass  # tabla no existe aún
         return {"ok": True, "cleared_tables": cleared, "message": "Estrategia reiniciada. El dashboard está en blanco."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al reiniciar: {str(e)}")
+        log.error("Error al reiniciar la estrategia: %s", str(e)[:200])
+        raise HTTPException(status_code=500, detail="Error al reiniciar la estrategia.")
+

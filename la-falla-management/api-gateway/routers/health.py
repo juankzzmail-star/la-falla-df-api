@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,8 @@ from ..models import StakeholderHealthLog
 from ..schemas import HealthLogCreate, HealthLogOut
 
 router = APIRouter(prefix="/stakeholder-health", tags=["stakeholder-health"])
+
+SALUD_VALUES = {"verde", "amarillo", "rojo"}
 
 
 @router.post("", response_model=List[HealthLogOut], status_code=201)
@@ -35,7 +37,13 @@ def list_health_logs(
 
 @router.get("/current")
 def get_current_health(salud: Optional[str] = Query(None), db: Session = Depends(get_db)):
-    salud_filter = f"AND shl.salud = '{salud}'" if salud else ""
+    where = ""
+    params: dict = {}
+    if salud:
+        if salud not in SALUD_VALUES:
+            raise HTTPException(422, f"salud debe ser uno de: {sorted(SALUD_VALUES)}")
+        where = "AND shl.salud = :salud"
+        params["salud"] = salud
     rows = db.execute(text(f"""
         SELECT DISTINCT ON (shl.stakeholder_id)
             shl.id, shl.stakeholder_id, shl.salud, shl.razon,
@@ -43,7 +51,7 @@ def get_current_health(salud: Optional[str] = Query(None), db: Session = Depends
             sm.nombre AS stakeholder_nombre, sm.clasificacion_negocio
         FROM stakeholder_health_log shl
         JOIN stakeholders_master sm ON sm.id = shl.stakeholder_id
-        WHERE 1=1 {salud_filter}
+        WHERE 1=1 {where}
         ORDER BY shl.stakeholder_id, shl.calculado_en DESC
-    """)).fetchall()
+    """), params).fetchall()
     return [dict(r._mapping) for r in rows]

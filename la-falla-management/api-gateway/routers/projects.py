@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -6,7 +8,6 @@ from pydantic import BaseModel
 from ..db import get_db
 from ..models import Project, Deliverable, EdtNode, Risk
 from ..schemas import EdtNodeCreate, EdtNodePatch, EdtNodeOut
-from .edt_onboarding import call_llm
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -30,6 +31,11 @@ class ProjectOut(BaseModel):
     ejecutado: float
     pct_ejecutado: float
     estado: str
+    # change unify-strategy-execution: expose the strategy links written on the ORM (models.py:218-221).
+    plan_id: Optional[int] = None
+    milestone_id: Optional[int] = None
+    anio: Optional[int] = None
+    origen: str = "planeado"
     entregables: List[DeliverableOut] = []
     docs: List[str] = []
 
@@ -44,6 +50,11 @@ class ProjectCreate(BaseModel):
     presupuesto: float
     ejecutado: float = 0.0
     estado: str = "activo"
+    # change unify-strategy-execution: link the won project to the strategy (plan + hito).
+    plan_id: Optional[int] = None
+    milestone_id: Optional[int] = None
+    anio: Optional[int] = None
+    origen: str = "planeado"          # convocatoria | planeado
 
 
 class DeliverableCreate(BaseModel):
@@ -71,6 +82,7 @@ def list_projects(area: Optional[str] = None, db: Session = Depends(get_db)):
             id=p.id, codigo=p.codigo, nombre=p.nombre, area=p.area,
             presupuesto=float(p.presupuesto), ejecutado=float(p.ejecutado),
             pct_ejecutado=round(pct, 1), estado=p.estado,
+            plan_id=p.plan_id, milestone_id=p.milestone_id, anio=p.anio, origen=p.origen,
             entregables=[DeliverableOut.model_validate(d) for d in deliverables],
         ))
     return result
@@ -87,6 +99,7 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
         id=p.id, codigo=p.codigo, nombre=p.nombre, area=p.area,
         presupuesto=float(p.presupuesto), ejecutado=float(p.ejecutado),
         pct_ejecutado=round(pct, 1), estado=p.estado,
+        plan_id=p.plan_id, milestone_id=p.milestone_id, anio=p.anio, origen=p.origen,
         entregables=[DeliverableOut.model_validate(d) for d in deliverables],
     )
 
@@ -95,12 +108,27 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
 def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
     p = Project(**body.model_dump())
     db.add(p)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Ya existe un proyecto con ese codigo")
     db.refresh(p)
+    # change unify-strategy-execution: a project advancing a hito refreshes that hito's derived pct
+    # (inlined SQL — projects.py must not import roadmap.py, which already imports from projects.py).
+    if p.milestone_id:
+        db.execute(text(
+            "UPDATE roadmap_milestones SET pct_completado = ("
+            "  SELECT COALESCE(AVG(pp.pct_completado_real), 0) FROM plans pp "
+            "  JOIN strategic_goals g ON g.id = pp.goal_id WHERE g.milestone_id = :mid"
+            ") WHERE id = :mid"), {"mid": p.milestone_id})
+        db.commit()
     return ProjectOut(
         id=p.id, codigo=p.codigo, nombre=p.nombre, area=p.area,
         presupuesto=float(p.presupuesto), ejecutado=float(p.ejecutado),
-        pct_ejecutado=0.0, estado=p.estado, entregables=[],
+        pct_ejecutado=0.0, estado=p.estado,
+        plan_id=p.plan_id, milestone_id=p.milestone_id, anio=p.anio, origen=p.origen,
+        entregables=[],
     )
 
 
@@ -160,24 +188,90 @@ def get_edt(project_id: int, db: Session = Depends(get_db)):
             roots.append(node)
     return roots
 
-def _transform_name(name: str) -> str:
-    # Transformación silenciosa de verbos a sustantivos
-    system = "Eres Gentil. Convierte la frase a un sustantivo/entregable sin verbos de acción. Ej: 'Instalar 30 equipos' -> '30 equipos instalados'. 'Filmar escena' -> 'Escena filmada'. Responde SOLO con la frase transformada."
-    try:
-        res = call_llm(system, name, max_tokens=100)
-        # Limpiar si responde con comillas
-        return res.strip().strip('"').strip("'")
-    except Exception:
-        return name
+# ─── EDT dependency-cycle validation (change edt-cycle-guard) ───────────────────
+def edt_cycle_chain(adjacency: dict, target_codigo: str, new_predecesores) -> Optional[List[str]]:
+    """Return the dependency chain (códigos) that would form a cycle if `target_codigo`'s predecesores
+    were set to `new_predecesores`, or None if acyclic. `adjacency` maps each node código -> its
+    predecesor códigos (a node lists the códigos it DEPENDS ON). A cycle = a node depending on itself,
+    directly or transitively."""
+    graph = {k: list(v or []) for k, v in adjacency.items()}
+    graph[target_codigo] = [str(p) for p in (new_predecesores or [])]
+    color: dict = {}
+    path: List[str] = []
+
+    def dfs(u: str) -> bool:
+        color[u] = 1  # GRAY (on stack)
+        path.append(u)
+        for v in graph.get(u, []):
+            if color.get(v) == 1:            # back-edge -> cycle
+                path.append(v)
+                return True
+            if color.get(v) is None and dfs(v):
+                return True
+        path.pop()
+        color[u] = 2  # BLACK (done)
+        return False
+
+    if not dfs(target_codigo):
+        return None
+    closing = path[-1]
+    return path[path.index(closing):] if closing in path[:-1] else path
+
+
+def find_any_edt_cycle(adjacency: dict) -> Optional[List[str]]:
+    """Return the first dependency cycle found anywhere in the EDT graph, or None."""
+    color: dict = {}
+    path: List[str] = []
+
+    def dfs(u: str) -> bool:
+        color[u] = 1
+        path.append(u)
+        for v in adjacency.get(u, []):
+            if color.get(v) == 1:
+                path.append(v)
+                return True
+            if color.get(v) is None and dfs(v):
+                return True
+        path.pop()
+        color[u] = 2
+        return False
+
+    for node in list(adjacency.keys()):
+        if color.get(node) is None:
+            path.clear()
+            if dfs(node):
+                closing = path[-1]
+                return path[path.index(closing):] if closing in path[:-1] else path
+    return None
+
+
+def _assert_edt_acyclic(db, project_id: int, effective_codigo: str, new_predecesores, old_codigo: str = None):
+    """Raise HTTP 400 if setting `effective_codigo`'s predecesores to `new_predecesores` would create a
+    circular dependency in the project's EDT (change edt-cycle-guard)."""
+    if not new_predecesores:
+        return
+    nodes = db.query(EdtNode).filter(EdtNode.project_id == project_id).all()
+    adjacency = {n.codigo: list(n.predecesores or []) for n in nodes}
+    if old_codigo and old_codigo != effective_codigo:
+        adjacency.pop(old_codigo, None)
+    chain = edt_cycle_chain(adjacency, effective_codigo, new_predecesores)
+    if chain:
+        raise HTTPException(
+            400,
+            "Dependencia circular en el EDT: " + " → ".join(chain) +
+            ". Un paquete de trabajo no puede depender (directa o indirectamente) de sí mismo.",
+        )
+
 
 @router.post("/{project_id}/edt", response_model=EdtNodeOut, status_code=201)
 def create_edt_node(project_id: int, body: EdtNodeCreate, db: Session = Depends(get_db)):
     if not db.get(Project, project_id):
         raise HTTPException(404, "Proyecto no encontrado")
-        
-    # Transformacion silenciosa de verbos
-    body.nombre = _transform_name(body.nombre)
-    
+
+    # Reject circular dependencies before creating (change edt-cycle-guard)
+    _assert_edt_acyclic(db, project_id, body.codigo, body.predecesores)
+
+    # change edt-name-transform-remove (AUD-018): persist the typed name verbatim — no LLM rename.
     node = EdtNode(project_id=project_id, **body.model_dump())
     db.add(node)
     db.commit()
@@ -189,15 +283,37 @@ def update_edt_node(project_id: int, node_id: int, body: EdtNodePatch, db: Sessi
     node = db.get(EdtNode, node_id)
     if not node or node.project_id != project_id:
         raise HTTPException(404, "Nodo EDT no encontrado")
-        
-    for k, v in body.model_dump(exclude_unset=True).items():
-        if k == 'nombre' and v:
-            v = _transform_name(v)
+
+    data = body.model_dump(exclude_unset=True)
+    # Reject circular dependencies before applying (change edt-cycle-guard)
+    if "predecesores" in data:
+        effective_codigo = data.get("codigo") or node.codigo
+        _assert_edt_acyclic(db, project_id, effective_codigo, data["predecesores"], old_codigo=node.codigo)
+
+    # change edt-name-transform-remove (AUD-018): set every field verbatim — `nombre` is no longer
+    # routed through an LLM (the mock mode silently turned it into "{}").
+    for k, v in data.items():
         setattr(node, k, v)
-        
+
     db.commit()
     db.refresh(node)
     return node
+
+
+@router.get("/{project_id}/edt/validate")
+def validate_edt(project_id: int, db: Session = Depends(get_db)):
+    """On-demand EDT integrity check: dependency cycles + dangling predecesores (brings the old
+    validate-deps.sh into the backend; change edt-cycle-guard)."""
+    if not db.get(Project, project_id):
+        raise HTTPException(404, "Proyecto no encontrado")
+    nodes = db.query(EdtNode).filter(EdtNode.project_id == project_id).all()
+    adjacency = {n.codigo: list(n.predecesores or []) for n in nodes}
+    cycle = find_any_edt_cycle(adjacency)
+    known = set(adjacency)
+    dangling = {c: [p for p in preds if p not in known]
+                for c, preds in adjacency.items() if any(p not in known for p in preds)}
+    return {"ok": cycle is None and not dangling, "cycle": cycle,
+            "dangling": dangling or None, "nodes": len(nodes)}
 
 
 @router.get("/{project_id}/raci")
@@ -244,17 +360,17 @@ def get_communications(project_id: int, db: Session = Depends(get_db)):
     nodes = db.query(EdtNode).filter(EdtNode.project_id == project_id, EdtNode.es_hito == True).all()
     comms = [{"id": "auto-semanal", "tipo": "informe", "descripcion": "Informe semanal de avance",
               "receptor": "Equipo + GG", "metodo": "email", "frecuencia": "semanal",
-              "responsable": "Director GP", "estado": "pendiente", "origen": "auto_cronograma"}]
+              "responsable": "Director DP", "estado": "pendiente", "origen": "auto_cronograma"}]
     for r in risks:
         comms.append({"id": f"auto-riesgo-{r.id}", "tipo": "alerta",
                       "descripcion": f"Alerta riesgo crítico: {r.descripcion[:60]}",
                       "receptor": r.responsable or "GG", "metodo": "email",
-                      "frecuencia": "inmediato", "responsable": "Director GP",
+                      "frecuencia": "inmediato", "responsable": "Director DP",
                       "estado": "pendiente", "origen": "auto_riesgo"})
     for n in nodes:
         comms.append({"id": f"auto-hito-{n.id}", "tipo": "hito",
                       "descripcion": f"Hito alcanzado: {n.nombre}",
                       "receptor": "GG + Equipo", "metodo": "email",
-                      "frecuencia": "evento", "responsable": n.responsable or "Director GP",
+                      "frecuencia": "evento", "responsable": n.responsable or "Director DP",
                       "estado": "pendiente", "origen": "auto_hito"})
     return comms

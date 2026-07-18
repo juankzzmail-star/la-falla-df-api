@@ -18,11 +18,19 @@ import os
 import json
 import time
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel
 import requests as _req
 
-router = APIRouter(prefix="/api/edt-onboarding", tags=["edt-onboarding"])
+from ._limits import body_size_cap, rate_limit
+
+# Public (unauthenticated) wizard — but guarded against abuse/cost-DoS since it can
+# call paid LLMs. See routers/_limits.py.
+router = APIRouter(
+    prefix="/api/edt-onboarding",
+    tags=["edt-onboarding"],
+    dependencies=[Depends(body_size_cap), Depends(rate_limit)],
+)
 
 # ============================================================================
 # MODELS
@@ -31,7 +39,7 @@ router = APIRouter(prefix="/api/edt-onboarding", tags=["edt-onboarding"])
 class ProjectInfo(BaseModel):
     name: str
     type: str   # audiovisual | investigacion | comercial | estrategico | mixto
-    area: str   # GP | GA | GI | GCF
+    area: str   # DP | DA | DI | DC (Direcciones)
 
 
 class IngestRequest(BaseModel):

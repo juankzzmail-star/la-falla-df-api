@@ -1,5 +1,75 @@
-/* global React, ReactDOM */
+/* global React, ReactDOM, gsap */
 const { useState: useSt, useEffect: useEff, useRef: useRf } = React;
+
+/* ============================================================
+   __fx — capa de fluidez compartida (GSAP). Carga antes que v14-app, así todo el Centro de Mando la usa.
+   Criterio: técnico + sobrio (eases power2/3.out, 0.3–0.6s, staggers cerrados, sin rebote). Respeta
+   prefers-reduced-motion y limpia con gsap.context().revert(). Si GSAP no cargó, todo degrada a no-op.
+   ============================================================ */
+window.__fx = (function () {
+  const has = () => typeof gsap !== 'undefined';
+  const reduce = () => (typeof matchMedia !== 'undefined') && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return {
+    reduce,
+    // Staggered entrance of the elements matching `sel` inside `scope`. Returns a gsap.context (call
+    // .revert() in cleanup) or null. Use from useLayoutEffect to avoid a flash.
+    enter(scope, sel, opts = {}) {
+      if (!has() || !scope || reduce()) return null;
+      return gsap.context(() => {
+        gsap.from(sel, {
+          autoAlpha: 0,
+          y: opts.y != null ? opts.y : 14,
+          duration: opts.d != null ? opts.d : 0.5,
+          ease: opts.ease || 'power3.out',
+          stagger: opts.from ? { each: opts.stagger != null ? opts.stagger : 0.06, from: opts.from } : (opts.stagger != null ? opts.stagger : 0.06),
+          delay: opts.delay || 0,
+          clearProps: 'opacity,visibility,transform',
+        });
+      }, scope);
+    },
+    // Modal/box open: gentle scale + fade. Returns a context or null.
+    modalIn(box, opts = {}) {
+      if (!has() || !box || reduce()) return null;
+      return gsap.context(() => {
+        gsap.from(box, { autoAlpha: 0, scale: 0.975, y: 10, duration: opts.d || 0.34, ease: 'power3.out', clearProps: 'opacity,visibility,transform' });
+      }, box);
+    },
+    // Count a number element from 0 (or opts.from) to `to`. `fmt(v)` formats each frame. Returns a kill fn.
+    countUp(el, to, opts = {}) {
+      const fmt = opts.fmt || ((v) => String(Math.round(v)));
+      if (!el) return () => {};
+      if (!has() || reduce() || typeof to !== 'number' || isNaN(to)) { el.textContent = fmt(typeof to === 'number' ? to : 0); return () => {}; }
+      const o = { v: opts.from != null ? opts.from : 0 };
+      const tw = gsap.to(o, { v: to, duration: opts.d || 1.0, ease: 'power2.out', onUpdate: () => { el.textContent = fmt(o.v); } });
+      return () => tw.kill();
+    },
+    // Capa 6: llena los arcos del radial de vacío → su valor real (strokeDashoffset, data-start->data-target).
+    // Reduced-motion: no anima (el JSX ya pinta el estado final lleno). Devuelve un context o null.
+    fillArcs(scope) {
+      if (!has() || !scope || reduce()) return null;
+      return gsap.context(() => {
+        const arcs = scope.querySelectorAll('.radial-arc');
+        if (!arcs.length) return;
+        gsap.fromTo(arcs,
+          { strokeDashoffset: (i, el) => parseFloat(el.getAttribute('data-start')) },
+          { strokeDashoffset: (i, el) => parseFloat(el.getAttribute('data-target')),
+            duration: 1.1, ease: 'power2.out', stagger: 0.08, clearProps: 'strokeDashoffset' });
+      }, scope);
+    },
+    // Capa 6: las barras verticales crecen de 0 → su altura real (scaleY desde abajo). Context o null.
+    fillBars(scope) {
+      if (!has() || !scope || reduce()) return null;
+      return gsap.context(() => {
+        const bars = scope.querySelectorAll('.cb-bar');
+        if (!bars.length) return;
+        gsap.from(bars, {
+          scaleY: 0, transformOrigin: 'bottom', duration: 0.7, ease: 'power2.out',
+          stagger: 0.05, clearProps: 'transform',
+        });
+      }, scope);
+    },
+  };
+})();
 
 /* ============================================================
    SAMPLE DATA
@@ -329,9 +399,9 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
             <div className="sb-contacts">
               {pageContacts.map(c => (
                 <div key={c.id} className="sb-contact">
-                  <div className="sb-c-avatar">{c.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>
+                  <div className="sb-c-avatar">{(c.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2) || '—'}</div>
                   <div className="sb-c-info">
-                    <div className="sb-c-name">{c.name}</div>
+                    <div className="sb-c-name">{c.name || 'Sin nombre'}</div>
                     <div className="sb-c-type">{c.type}</div>
                     <div className="sb-c-details">
                       {c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`} className="sb-c-link">📞 {c.phone}</a>}
@@ -494,7 +564,7 @@ const EDT_FALLBACK = {
     { id:'4.0',codigo:'4.0',nivel:1,nombre:'Entrega y distribución',costo:18000000,duracion_dias:7,porcentaje_avance:0,es_paquete_trabajo:false,es_hito:false,estado:'planificado',responsable:'Producción',predecesores:['3.3'],alerta:null,
       hijos:[
         {id:'4.1',codigo:'4.1',nivel:2,nombre:'Entrega FDC',costo:10000000,duracion_dias:2,porcentaje_avance:0,es_paquete_trabajo:true,es_hito:false,estado:'planificado',responsable:'Producción',predecesores:['3.3'],alerta:null,hijos:[]},
-        {id:'4.2',codigo:'4.2',nivel:2,nombre:'Distribución plataformas',costo:8000000,duracion_dias:5,porcentaje_avance:0,es_paquete_trabajo:true,es_hito:false,estado:'planificado',responsable:'GA',predecesores:['4.1'],alerta:null,hijos:[]},
+        {id:'4.2',codigo:'4.2',nivel:2,nombre:'Distribución plataformas',costo:8000000,duracion_dias:5,porcentaje_avance:0,es_paquete_trabajo:true,es_hito:false,estado:'planificado',responsable:'DA',predecesores:['4.1'],alerta:null,hijos:[]},
       ]
     },
     { id:'4.M',codigo:'4.M',nivel:1,nombre:'Entrega final aprobada',costo:0,duracion_dias:0,porcentaje_avance:0,es_paquete_trabajo:false,es_hito:true,estado:'planificado',responsable:'GG',predecesores:['4.2'],alerta:null,hijos:[]},
@@ -611,12 +681,12 @@ function _detectCuellos(adqs) {
 
 const RIESGOS_FALLBACK = {
   sugeridos: [
-    { id:'RS01', descripcion:'Bloqueo comunitario en Caribe', causa:'Falta de acuerdo con comunidad local', efecto:'Paro del rodaje >5 días', area:'Proyectos', probabilidad:4, impacto:5, estrategia:'Evitar', responsable:'Director GP', paquete:'2.1' },
-    { id:'RS02', descripcion:'Sobrecosto material Pereira', causa:'Inflación de alquiler de equipos', efecto:'Desfase presupuestal +15%', area:'Proyectos', probabilidad:4, impacto:4, estrategia:'Mitigar', responsable:'GCF', paquete:'2.1' },
-    { id:'RS03', descripcion:'Editor sin contrato vigente', causa:'Contrato vencido sin renovar', efecto:'Retraso en edición rough cut', area:'Proyectos', probabilidad:4, impacto:4, estrategia:'Transferir', responsable:'Director GP', paquete:'3.1' },
+    { id:'RS01', descripcion:'Bloqueo comunitario en Caribe', causa:'Falta de acuerdo con comunidad local', efecto:'Paro del rodaje >5 días', area:'Proyectos', probabilidad:4, impacto:5, estrategia:'Evitar', responsable:'Director DP', paquete:'2.1' },
+    { id:'RS02', descripcion:'Sobrecosto material Pereira', causa:'Inflación de alquiler de equipos', efecto:'Desfase presupuestal +15%', area:'Proyectos', probabilidad:4, impacto:4, estrategia:'Mitigar', responsable:'DC', paquete:'2.1' },
+    { id:'RS03', descripcion:'Editor sin contrato vigente', causa:'Contrato vencido sin renovar', efecto:'Retraso en edición rough cut', area:'Proyectos', probabilidad:4, impacto:4, estrategia:'Transferir', responsable:'Director DP', paquete:'3.1' },
   ],
   activos: [
-    { id:'R01', descripcion:'Lluvia en zona de rodaje', causa:'Temporada de lluvias Eje Cafetero', efecto:'Pérdida de días de rodaje', area:'Proyectos', probabilidad:3, impacto:5, estrategia:'Mitigar', responsable:'Director GP', paquete:'2.1', estado_mitigacion:'en_mitigacion' },
+    { id:'R01', descripcion:'Lluvia en zona de rodaje', causa:'Temporada de lluvias Eje Cafetero', efecto:'Pérdida de días de rodaje', area:'Proyectos', probabilidad:3, impacto:5, estrategia:'Mitigar', responsable:'Director DP', paquete:'2.1', estado_mitigacion:'en_mitigacion' },
     { id:'R02', descripcion:'Retraso en aprobación FDC', causa:'Cambio de directivos en FDC', efecto:'Congelamiento de fondos 30 días', area:'Comercial', probabilidad:2, impacto:5, estrategia:'Aceptar', responsable:'GG', paquete:'4.1', estado_mitigacion:'monitoreado' },
   ]
 };
@@ -625,15 +695,15 @@ function _detectRiesgosSugeridos(paquetes, adqs) {
   const sugeridos = [];
   paquetes.forEach(p => {
     if(p.alerta && !sugeridos.find(s=>s.paquete===p.codigo)) {
-      sugeridos.push({ id:'RS-auto-'+p.codigo, descripcion:'Alerta activa: '+p.nombre, causa:'Paquete con alerta en cronograma', efecto:'Posible retraso en fase', area:'Proyectos', probabilidad:4, impacto:5, estrategia:'Evitar', responsable:'Director GP', paquete:p.codigo, auto:true });
+      sugeridos.push({ id:'RS-auto-'+p.codigo, descripcion:'Alerta activa: '+p.nombre, causa:'Paquete con alerta en cronograma', efecto:'Posible retraso en fase', area:'Proyectos', probabilidad:4, impacto:5, estrategia:'Evitar', responsable:'Director DP', paquete:p.codigo, auto:true });
     }
     if(p.critica && p.porcentaje_avance < 30 && !sugeridos.find(s=>s.paquete===p.codigo)) {
-      sugeridos.push({ id:'RS-crit-'+p.codigo, descripcion:'Ruta crítica con bajo avance: '+p.nombre, causa:'Holgura cero con avance insuficiente', efecto:'Retraso en entrega final', area:'Proyectos', probabilidad:3, impacto:5, estrategia:'Mitigar', responsable:'Director GP', paquete:p.codigo, auto:true });
+      sugeridos.push({ id:'RS-crit-'+p.codigo, descripcion:'Ruta crítica con bajo avance: '+p.nombre, causa:'Holgura cero con avance insuficiente', efecto:'Retraso en entrega final', area:'Proyectos', probabilidad:3, impacto:5, estrategia:'Mitigar', responsable:'Director DP', paquete:p.codigo, auto:true });
     }
   });
   (adqs||[]).forEach(a => {
     if(a.semaforo === 'rojo') {
-      sugeridos.push({ id:'RS-adq-'+a.id, descripcion:'Adquisición vencida: '+a.elemento, causa:'Fecha de entrega superada', efecto:'Cuello de botella en producción', area:'Proyectos', probabilidad:3, impacto:4, estrategia:'Transferir', responsable:'GCF', paquete:'—', auto:true });
+      sugeridos.push({ id:'RS-adq-'+a.id, descripcion:'Adquisición vencida: '+a.elemento, causa:'Fecha de entrega superada', efecto:'Cuello de botella en producción', area:'Proyectos', probabilidad:3, impacto:4, estrategia:'Transferir', responsable:'DC', paquete:'—', auto:true });
     }
   });
   return sugeridos;
@@ -647,23 +717,23 @@ function _gentilRiesgoFeedback(estrategia, prob, imp) {
 }
 
 const COMUNICACIONES_FALLBACK = [
-  { id:'C01', tipo:'inf_semanal', descripcion:'Informe semanal de avance', origen:'auto_cronograma', receptor:'GG / Clementino', email:'clementino@lafalla.co', metodo:'email', frecuencia:'semanal', responsable:'Director GP', estado:'pendiente' },
-  { id:'C02', tipo:'alerta_riesgo', descripcion:'Alerta riesgo crítico RS01', origen:'auto_riesgo', receptor:'GG / Clementino', email:'clementino@lafalla.co', metodo:'whatsapp', frecuencia:'evento', responsable:'Director GP', estado:'enviado' },
-  { id:'C03', tipo:'acta', descripcion:'Acta de reunión quincenal', origen:'manual', receptor:'Equipo interno', email:'', metodo:'reunion', frecuencia:'quincenal', responsable:'Director GP', estado:'enviado' },
-  { id:'C04', tipo:'notif_proveedor', descripcion:'Notificación proveedor vencido: Transporte', origen:'auto_adquisicion', receptor:'GCF / Quinaya', email:'quinaya@lafalla.co', metodo:'email', frecuencia:'evento', responsable:'GCF', estado:'pendiente' },
-  { id:'C05', tipo:'hito', descripcion:'Hito Rough Cut listo', origen:'auto_hito', receptor:'GG / Stakeholders', email:'clementino@lafalla.co', metodo:'email', frecuencia:'evento', responsable:'Director GP', estado:'pendiente' },
+  { id:'C01', tipo:'inf_semanal', descripcion:'Informe semanal de avance', origen:'auto_cronograma', receptor:'GG / Clementino', email:'clementino@lafalla.co', metodo:'email', frecuencia:'semanal', responsable:'Director DP', estado:'pendiente' },
+  { id:'C02', tipo:'alerta_riesgo', descripcion:'Alerta riesgo crítico RS01', origen:'auto_riesgo', receptor:'GG / Clementino', email:'clementino@lafalla.co', metodo:'whatsapp', frecuencia:'evento', responsable:'Director DP', estado:'enviado' },
+  { id:'C03', tipo:'acta', descripcion:'Acta de reunión quincenal', origen:'manual', receptor:'Equipo interno', email:'', metodo:'reunion', frecuencia:'quincenal', responsable:'Director DP', estado:'enviado' },
+  { id:'C04', tipo:'notif_proveedor', descripcion:'Notificación proveedor vencido: Transporte', origen:'auto_adquisicion', receptor:'DC / Quinaya', email:'quinaya@lafalla.co', metodo:'email', frecuencia:'evento', responsable:'DC', estado:'pendiente' },
+  { id:'C05', tipo:'hito', descripcion:'Hito Rough Cut listo', origen:'auto_hito', receptor:'GG / Stakeholders', email:'clementino@lafalla.co', metodo:'email', frecuencia:'evento', responsable:'Director DP', estado:'pendiente' },
 ];
 
 function _detectComunicaciones(paquetes, adqs, risks) {
-  const auto = [{ id:'C-auto-inf', tipo:'inf_semanal', descripcion:'Informe semanal automático', origen:'auto_cronograma', receptor:'GG', email:'', metodo:'email', frecuencia:'semanal', responsable:'Director GP', estado:'pendiente' }];
+  const auto = [{ id:'C-auto-inf', tipo:'inf_semanal', descripcion:'Informe semanal automático', origen:'auto_cronograma', receptor:'GG', email:'', metodo:'email', frecuencia:'semanal', responsable:'Director DP', estado:'pendiente' }];
   (paquetes||[]).filter(p=>p.es_hito).forEach(h => {
-    auto.push({ id:'C-hito-'+h.codigo, tipo:'hito', descripcion:'Hito: '+h.nombre, origen:'auto_hito', receptor:'GG / Stakeholders', email:'', metodo:'email', frecuencia:'evento', responsable:'Director GP', estado:'pendiente' });
+    auto.push({ id:'C-hito-'+h.codigo, tipo:'hito', descripcion:'Hito: '+h.nombre, origen:'auto_hito', receptor:'GG / Stakeholders', email:'', metodo:'email', frecuencia:'evento', responsable:'Director DP', estado:'pendiente' });
   });
   (risks||[]).filter(r=>r.probabilidad*r.impacto>=15).forEach(r => {
-    auto.push({ id:'C-riesgo-'+r.id, tipo:'alerta_riesgo', descripcion:'Alerta: '+r.descripcion, origen:'auto_riesgo', receptor:'GG', email:'', metodo:'whatsapp', frecuencia:'evento', responsable:'Director GP', estado:'pendiente' });
+    auto.push({ id:'C-riesgo-'+r.id, tipo:'alerta_riesgo', descripcion:'Alerta: '+r.descripcion, origen:'auto_riesgo', receptor:'GG', email:'', metodo:'whatsapp', frecuencia:'evento', responsable:'Director DP', estado:'pendiente' });
   });
   (adqs||[]).filter(a=>a.semaforo==='rojo').forEach(a => {
-    auto.push({ id:'C-adq-'+a.id, tipo:'notif_proveedor', descripcion:'Proveedor vencido: '+a.elemento, origen:'auto_adquisicion', receptor:'GCF', email:'', metodo:'email', frecuencia:'evento', responsable:'GCF', estado:'pendiente' });
+    auto.push({ id:'C-adq-'+a.id, tipo:'notif_proveedor', descripcion:'Proveedor vencido: '+a.elemento, origen:'auto_adquisicion', receptor:'DC', email:'', metodo:'email', frecuencia:'evento', responsable:'DC', estado:'pendiente' });
   });
   return auto;
 }
@@ -683,9 +753,9 @@ function _buildCalendarUrl(comm, proyecto) {
 const RACI_FALLBACK = {
   personas: [
     { id:'p1', nombre:'Clementino', rol:'GG', iniciales:'CL' },
-    { id:'p2', nombre:'Director GP', rol:'GP', iniciales:'DG' },
-    { id:'p3', nombre:'Director GA', rol:'GA', iniciales:'DA' },
-    { id:'p4', nombre:'Dir. GCF', rol:'GCF', iniciales:'CF' },
+    { id:'p2', nombre:'Director DP', rol:'DP', iniciales:'DP' },
+    { id:'p3', nombre:'Director DA', rol:'DA', iniciales:'DA' },
+    { id:'p4', nombre:'Dir. DC', rol:'DC', iniciales:'DC' },
     { id:'p5', nombre:'Beto', rol:'Producción', iniciales:'BE' },
     { id:'p6', nombre:'Lina', rol:'Investigación', iniciales:'LN' },
     { id:'p7', nombre:'Editor ext.', rol:'Editor', iniciales:'ED' },
@@ -735,6 +805,11 @@ function EdtViewer({ project }) {
   const [showNewCom, setShowNewCom] = useSt(false);
   const [newComForm, setNewComForm] = useSt({ tipo:'inf_semanal', metodo:'email', descripcion:'', receptor:'', email:'', frecuencia:'evento', responsable:'' });
   const [shPicker, setShPicker] = useSt('');
+  // Real stakeholder directory (same source the App loads); no fabricated contacts.
+  const [directory, setDirectory] = useSt([]);
+  // Adq./Riesgos/Com. have no endpoint yet — they load from *_FALLBACK seed data.
+  // Flag it as DEMO so the example data is never presented as real.
+  const [moduleDemo, setModuleDemo] = useSt(true);
   const [showSyncModal, setShowSyncModal] = useSt(false);
   const [showAddPersona, setShowAddPersona] = useSt(false);
   const [newPersonaForm, setNewPersonaForm] = useSt({ nombre:'', rol:'' });
@@ -771,7 +846,7 @@ function EdtViewer({ project }) {
     { id:'4.0', name:'Entrega y distribución', dur:7, milestone:true,
       tasks: ents.slice(-1).length > 0 && ents.slice(-1)[0] ? [{id:'4.1',name:ents[ents.length-1].titulo||ents[ents.length-1].t,dur:5,resp:'Producción',status:(ents[ents.length-1].completado||ents[ents.length-1].done)?'done':'pending'}] : [
         {id:'4.1',name:'Entrega final',dur:2,resp:'Producción',status:pct>=100?'done':'pending'},
-        {id:'4.2',name:'Distribución',dur:5,resp:'GA',status:'pending'},
+        {id:'4.2',name:'Distribución',dur:5,resp:'DA',status:'pending'},
       ]
     },
   ];
@@ -793,10 +868,25 @@ function EdtViewer({ project }) {
       .then(d=>setRaciData(d))
       .catch(()=>setRaciData(RACI_FALLBACK));
 
+    // Fetch real stakeholder directory for the communications receptor picker.
+    // On failure, stay empty — never autocomplete against fabricated contacts.
+    fetch(`${base}/stakeholders?limit=100`, k?{headers:{'X-API-Key':k}}:{})
+      .then(r=>r.ok?r.json():Promise.reject())
+      .then(list=>setDirectory((list||[]).map(s=>({
+        id: s.id,
+        name: s.nombre || s.name || '',
+        email: s.correo || s.email || '',
+        type: s.clasificacion_negocio || s.tipo || '',
+      }))))
+      .catch(()=>setDirectory([]));
+
+    // No endpoint yet for these three modules — seed from *_FALLBACK and flag as DEMO
+    // so the example data is never shown as real (flip to false when wired to the API).
     setAdqData(_detectCuellos(ADQUISICIONES_FALLBACK));
     setRiskSugeridos(RIESGOS_FALLBACK.sugeridos);
     setRiskActivos(RIESGOS_FALLBACK.activos);
     setComData(COMUNICACIONES_FALLBACK);
+    setModuleDemo(true);
   }, [project.id]);
 
   const flat = edtData ? _flatEdt(edtData.nodos) : [];
@@ -1000,6 +1090,9 @@ function EdtViewer({ project }) {
       {/* MODO: ADQUISICIONES */}
       {mode==='adquisiciones' && (
         <div>
+          {moduleDemo && (
+            <div style={{ marginBottom:12, padding:'6px 12px', borderRadius:6, border:'1.5px solid #e89c2b40', background:'#e89c2b10', ...mono, fontSize:10, color:'#e89c2b', letterSpacing:'0.08em' }}>⚠ DEMO · DATOS DE EJEMPLO · sin endpoint de adquisiciones aún</div>
+          )}
           {(() => {
             const adqs = adqData || [];
             const total = adqs.length;
@@ -1062,6 +1155,9 @@ function EdtViewer({ project }) {
       {/* MODO: RIESGOS */}
       {mode==='riesgos' && (
         <div>
+          {moduleDemo && (
+            <div style={{ marginBottom:12, padding:'6px 12px', borderRadius:6, border:'1.5px solid #e89c2b40', background:'#e89c2b10', ...mono, fontSize:10, color:'#e89c2b', letterSpacing:'0.08em' }}>⚠ DEMO · DATOS DE EJEMPLO · sin endpoint de riesgos aún</div>
+          )}
           {/* Sugeridos auto */}
           {riskSugeridos.filter(r=>!sugeridosState[r.id]).length > 0 && (
             <div style={{ marginBottom:16, padding:'12px 14px', borderRadius:10, border:'1.5px solid #e89c2b40', background:'#e89c2b08' }}>
@@ -1190,6 +1286,9 @@ function EdtViewer({ project }) {
       {/* MODO: COMUNICACIONES */}
       {mode==='comunicaciones' && (
         <div>
+          {moduleDemo && (
+            <div style={{ marginBottom:12, padding:'6px 12px', borderRadius:6, border:'1.5px solid #e89c2b40', background:'#e89c2b10', ...mono, fontSize:10, color:'#e89c2b', letterSpacing:'0.08em' }}>⚠ DEMO · DATOS DE EJEMPLO · sin endpoint de comunicaciones aún</div>
+          )}
           {(() => {
             const all = allCom;
             const pendientes = all.filter(c=>(comEstados[c.id]||c.estado)==='pendiente').length;
@@ -1271,11 +1370,14 @@ function EdtViewer({ project }) {
                           <input value={newComForm.receptor||''} onChange={e=>{ setNewComForm(f=>({...f,receptor:e.target.value})); setShPicker(e.target.value); }} placeholder="Nombre o buscar en directorio..." style={{ width:'100%', padding:'6px 10px', borderRadius:6, border:'1.5px solid var(--line)', fontFamily:'Work Sans,sans-serif', fontSize:12, boxSizing:'border-box' }}/>
                           {shPicker.length>1 && (
                             <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:'1.5px solid var(--line)', borderRadius:8, zIndex:100, maxHeight:120, overflowY:'auto' }}>
-                              {CONTACTS_DATA.filter(c=>c.name.toLowerCase().includes(shPicker.toLowerCase())).slice(0,5).map(c=>(
+                              {directory.filter(c=>(c.name||'').toLowerCase().includes(shPicker.toLowerCase())).slice(0,5).map(c=>(
                                 <div key={c.id} style={{ padding:'6px 10px', cursor:'pointer', fontFamily:'Work Sans,sans-serif', fontSize:12 }} onClick={()=>{ setNewComForm(f=>({...f,receptor:c.name,email:c.email})); setShPicker(''); }}>
                                   {c.name} <span style={{ color:'var(--mute)', fontSize:11 }}>· {c.type}</span>
                                 </div>
                               ))}
+                              {directory.filter(c=>(c.name||'').toLowerCase().includes(shPicker.toLowerCase())).length===0 && (
+                                <div style={{ padding:'6px 10px', fontFamily:'Work Sans,sans-serif', fontSize:12, color:'var(--mute)' }}>Sin coincidencias en el directorio</div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1500,7 +1602,7 @@ function EdtWizard({ project, onClose }) {
     if(!files.length) return;
     setErr(''); setStep('analyzing');
     try {
-      const pi = {name:project.nombre||project.name||'Proyecto', type:'audiovisual', area:project.area||'GP'};
+      const pi = {name:project.nombre||project.name||'Proyecto', type:'audiovisual', area:project.area||'DP'};
       const ing = await apiPost('/api/edt-onboarding/ingest', {project:pi, documents:files});
       setExtracted(ing.extracted);
       const qr = await apiPost('/api/edt-onboarding/questions', {project:pi, extracted:ing.extracted, gaps:ing.gaps||[]});
@@ -1513,7 +1615,7 @@ function EdtWizard({ project, onClose }) {
   const runSynthesize = async () => {
     setErr(''); setStep('synthesizing');
     try {
-      const pi = {name:project.nombre||project.name||'Proyecto', type:'audiovisual', area:project.area||'GP'};
+      const pi = {name:project.nombre||project.name||'Proyecto', type:'audiovisual', area:project.area||'DP'};
       const r = await apiPost('/api/edt-onboarding/synthesize', {project:pi, extracted, answers});
       setEdtResult(r); setStep('done');
     } catch(e) { setErr(e.message.slice(0,200)); setStep('questions'); }
@@ -1756,6 +1858,7 @@ function ProjectsDashboard({ open, onClose }){
   const [sel, setSel] = useSt(null);
   const [projects, setProjects] = useSt([]);
   const [loading, setLoading] = useSt(false);
+  const [loadError, setLoadError] = useSt(false);
   const [newProj, setNewProj] = useSt(false);
   const [activeTab, setActiveTab] = useSt('resumen');
 
@@ -1774,17 +1877,14 @@ function ProjectsDashboard({ open, onClose }){
   useEff(()=>{
     if(!open) return;
     setLoading(true);
+    setLoadError(false);
     const k = window.__API_KEY__ || '';
     const b = (window.__API_BASE__ || '').replace(/\/$/,'');
     fetch(`${b}/projects`, k ? {headers:{'X-API-Key':k}} : {})
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => setProjects(data))
-      .catch(() => setProjects(PROJECTS_DATA.map((p,idx) => ({
-        id: idx+1, codigo: p.id, nombre: p.name||p.nombre, area: p.area,
-        presupuesto: 0, ejecutado: 0, pct_ejecutado: 0, estado: 'activo',
-        entregables: (p.entregables||[]).map((e,i)=>({id:i+1, titulo:e.t||e.titulo, completado:e.done||e.completado||false, orden:i})),
-        docs: p.docs||[],
-      }))))
+      // Honest failure: no fabricated projects. Show an error state instead.
+      .catch(() => { setProjects([]); setLoadError(true); })
       .finally(() => setLoading(false));
   },[open]);
 
@@ -1817,7 +1917,10 @@ function ProjectsDashboard({ open, onClose }){
 
           {!loading && !project && (
             <div className="proj-grid">
-              {projects.length === 0 && (
+              {projects.length === 0 && loadError && (
+                <div className="proj-empty">No se pudieron cargar los proyectos · Revisa la conexión e inténtalo de nuevo</div>
+              )}
+              {projects.length === 0 && !loadError && (
                 <div className="proj-empty">No hay proyectos activos · Haz clic en <strong>+ Añadir proyecto</strong> para comenzar</div>
               )}
               {projects.map(p => {
