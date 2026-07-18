@@ -417,9 +417,9 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
                     <div className="sb-c-name">{c.name || 'Sin nombre'}</div>
                     <div className="sb-c-type">{c.type}</div>
                     <div className="sb-c-details">
-                      {c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`} className="sb-c-link">📞 {c.phone}</a>}
-                      {c.email && <a href={`mailto:${c.email}`} className="sb-c-link">✉ {c.email}</a>}
-                      {c.linkedin && <a href={c.linkedin.startsWith('http')?c.linkedin:`https://${c.linkedin}`} target="_blank" rel="noopener noreferrer" className="sb-c-link">🔗 LinkedIn</a>}
+                      {c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`} className="sb-c-link" onClick={e=>e.stopPropagation()}>📞 {c.phone}</a>}
+                      {c.email && <a href={`mailto:${c.email}`} className="sb-c-link" onClick={e=>e.stopPropagation()}>✉ {c.email}</a>}
+                      {c.linkedin && <a href={c.linkedin.startsWith('http')?c.linkedin:`https://${c.linkedin}`} target="_blank" rel="noopener noreferrer" className="sb-c-link" onClick={e=>e.stopPropagation()}>🔗 LinkedIn</a>}
                       {!c.phone && !c.email && !c.linkedin && <span className="sb-c-nocontact">Sin datos de contacto</span>}
                     </div>
                   </div>
