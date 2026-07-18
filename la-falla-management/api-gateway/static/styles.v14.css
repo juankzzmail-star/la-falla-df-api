@@ -3194,6 +3194,12 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
   display:flex; justify-content:flex-end; gap:10px;
   padding:14px 20px; border-top:1px solid #222;
 }
+.stk-view-ft .stk-cancel{
+  color:#585854; border-color:#2a2a2a;
+}
+.stk-view-ft .stk-cancel:hover{
+  color:#aaa; border-color:#444;
+}
 
 /* Edit inline for bandeja notes */
 .sb-edit-input{
