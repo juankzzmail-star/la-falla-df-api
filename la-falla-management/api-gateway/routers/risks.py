@@ -103,7 +103,10 @@ def list_risks(area: Optional[str] = None, db: Session = Depends(get_db)):
 @router.post("", response_model=RiskOut, status_code=201)
 def create_risk(body: RiskCreate, db: Session = Depends(get_db)):
     data = body.model_dump()
-    data['nivel_riesgo'] = data['impacto'] * data['probabilidad']
+    # nivel_riesgo is GENERATED ALWAYS in prod Postgres (ddl_v2): omit it there so the DB computes
+    # it; the SQLite test schema has it as a plain NOT NULL column and still needs the value.
+    if db.get_bind().dialect.name != "postgresql":
+        data['nivel_riesgo'] = data['impacto'] * data['probabilidad']
     r = Risk(**data)
     db.add(r)
     db.commit()
@@ -118,7 +121,8 @@ def update_risk(risk_id: int, body: RiskPatch, db: Session = Depends(get_db)):
         raise HTTPException(404, "Riesgo no encontrado")
     for k, v in body.model_dump(exclude_none=True).items():
         setattr(r, k, v)
-    r.nivel_riesgo = r.impacto * r.probabilidad
+    if db.get_bind().dialect.name != "postgresql":
+        r.nivel_riesgo = r.impacto * r.probabilidad
     db.commit()
     db.refresh(r)
     return r
@@ -279,12 +283,11 @@ def _propose_risks(db: Session) -> int:
         imp = max(1, min(5, int(n.get("impacto") or 3)))
         prob = max(1, min(5, int(n.get("probabilidad") or 3)))
         plan = n.get("plan_mitigacion") or []
-        r = Risk(
+        kwargs = dict(
             descripcion=desc,
             area=(n.get("area") or "Transversal").strip(),
             impacto=imp,
             probabilidad=prob,
-            nivel_riesgo=imp * prob,
             estado_mitigacion="monitoreado",
             origen="gentil_auto",
             estrategia=(n.get("estrategia") or "Mitigar").strip(),
@@ -292,6 +295,9 @@ def _propose_risks(db: Session) -> int:
             plan_mitigacion=json.dumps([str(p).strip() for p in plan if str(p).strip()], ensure_ascii=False),
             fecha_analisis=now,
         )
+        if db.get_bind().dialect.name != "postgresql":
+            kwargs["nivel_riesgo"] = imp * prob
+        r = Risk(**kwargs)
         db.add(r)
         existing_norm.add(_norm(desc))
         added += 1

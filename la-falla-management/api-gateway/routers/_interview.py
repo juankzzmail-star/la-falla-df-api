@@ -208,17 +208,23 @@ def _validate_riesgos(answer):
 
 
 def _write_riesgos(db, norm):
-    # nivel_riesgo is a PLAIN NOT NULL column, not generated: models.py declares it as a regular
-    # Column and every live write path (create_risk, update_risk, the radar's _propose_risks) sets it
-    # explicitly. Omitting it violates NOT NULL. The validator already computed nivel = imp * prob.
+    # nivel_riesgo is GENERATED ALWAYS AS (impacto * probabilidad) in prod Postgres (ddl_v2) —
+    # inserting it there errors with GeneratedAlways. The SQLite test schema declares it as a plain
+    # NOT NULL column, so the non-Postgres writer must still supply the validator's imp * prob
+    # (same split _write_liquidez applies to liquidez_total).
     n = 0
+    is_pg = db.get_bind().dialect.name == "postgresql"
+    cols = "descripcion, area, impacto, probabilidad, estado_mitigacion, origen"
+    vals = ":desc, :area, :imp, :prob, :estado, 'ceo_manual'"
+    if not is_pg:
+        cols += ", nivel_riesgo"
+        vals += ", :nivel"
     for r in norm["risks"]:
-        db.execute(text("""
-            INSERT INTO risks (descripcion, area, impacto, probabilidad, nivel_riesgo,
-                               estado_mitigacion, origen)
-            VALUES (:desc, :area, :imp, :prob, :nivel, :estado, 'ceo_manual')
-        """), {"desc": r["descripcion"], "area": r["area"], "imp": r["impacto"],
-               "prob": r["probabilidad"], "nivel": r["nivel"], "estado": r["estado"]})
+        params = {"desc": r["descripcion"], "area": r["area"], "imp": r["impacto"],
+                  "prob": r["probabilidad"], "estado": r["estado"]}
+        if not is_pg:
+            params["nivel"] = r["nivel"]
+        db.execute(text(f"INSERT INTO risks ({cols}) VALUES ({vals})"), params)
         n += 1
     return n
 
