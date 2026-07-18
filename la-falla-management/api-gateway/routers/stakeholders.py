@@ -1,5 +1,7 @@
 import os
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
@@ -9,6 +11,13 @@ from datetime import datetime
 from ..db import get_db
 
 router = APIRouter(prefix="/stakeholders", tags=["stakeholders"])
+
+# When set, GET /stakeholders proxies to the stakeholders:master service so the
+# Centro de Mando reads from the authoritative stakeholders service instead of the
+# local DB query. Falls back to the local DB if the env var is absent or the
+# service is unreachable.
+_STK_SERVICE_URL = os.environ.get("STAKEHOLDERS_BASE_URL", "").rstrip("/")
+_STK_SERVICE_KEY = os.environ.get("STAKEHOLDERS_API_KEY", os.environ.get("FASTAPI_GM_API_KEY", ""))
 
 N8N_HOST = os.environ.get("N8N_HOST", "")
 N8N_API_KEY = os.environ.get("N8N_API_KEY", "")
@@ -173,7 +182,7 @@ def stakeholder_impact(body: ImpactRequest, db: Session = Depends(get_db)):
     }
 
 
-@router.get("", response_model=List[StakeholderOut])
+@router.get("")
 def list_stakeholders(
     search: Optional[str] = None,
     clasificacion: Optional[str] = None,
@@ -182,6 +191,28 @@ def list_stakeholders(
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
+    # Proxy to the authoritative stakeholders:master service when configured.
+    if _STK_SERVICE_URL:
+        try:
+            params: dict = {"limit": limit, "offset": offset}
+            if search:
+                params["search"] = search
+            if clasificacion:
+                params["clasificacion"] = clasificacion
+            if activo is not None:
+                params["activo"] = str(activo).lower()
+            resp = httpx.get(
+                f"{_STK_SERVICE_URL}/stakeholders",
+                headers={"X-API-Key": _STK_SERVICE_KEY},
+                params=params,
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            return JSONResponse(content=resp.json())
+        except Exception:
+            pass  # fall through to local DB on any error
+
+    # Local DB fallback (also used when STAKEHOLDERS_BASE_URL is not set).
     q = """
         SELECT id, nombre, rol, correo, telefono, ubicacion,
                clasificacion_negocio, observaciones, servicios, linkedin_url,
@@ -189,7 +220,7 @@ def list_stakeholders(
         FROM stakeholders_master
         WHERE 1=1
     """
-    params: dict = {}
+    params = {}
     if search:
         q += " AND (nombre ILIKE :search OR correo ILIKE :search OR ubicacion ILIKE :search OR rol ILIKE :search)"
         params["search"] = f"%{search}%"
