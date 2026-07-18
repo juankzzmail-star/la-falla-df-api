@@ -512,7 +512,88 @@ function Lectura(){
 // change unify-strategy-execution: SEGS_FALLBACK (16 fabricated milestones) removed. The grid now
 // reads real roadmap_milestones; when empty it shows an honest "sin datos" state + DEMO badge.
 
-const SEG_DETAIL = {};
+const SEG_DETAIL = {
+  'Identidad de marca': {
+    cuando:'Q1 2024', descripcion:'Logo, paleta visual, voz de marca y manual de identidad. Base de toda la comunicación de La Falla.',
+    logros:['Sistema de identidad visual completo: logo, paleta, tipografía y tono','Manual de marca entregado a todas las áreas y aliados','Voz de marca definida y aplicada en todas las comunicaciones','Reconocimiento de marca validado por MinCultura y ACMI'],
+    leccion:'El proceso tomó 3 meses de iteración — involucrar al equipo completo desde la primera sesión redujo el retrabajo a cero.',
+  },
+  'Plataforma digital': {
+    cuando:'Q2 2024', descripcion:'Sitio web lafalla.co, perfiles de redes sociales y presencia digital unificada.',
+    logros:['lafalla.co publicado y operativo con analíticas (GA4)','Presencia unificada en Instagram, LinkedIn y YouTube','Centro de Mando desplegado en VPS propio (este dashboard)','Infraestructura digital autónoma: no dependemos de terceros para operar'],
+    leccion:'Optar por VPS self-hosted desde el inicio nos dio flexibilidad total para el Centro de Mando. En SaaS esto habría costado 3× y sin control.',
+  },
+  'Red de aliados 1': {
+    cuando:'Q3 2024', descripcion:'Acuerdos con FDC, MinCultura y ACMI. Red inicial de alianzas estratégicas.',
+    logros:['Acuerdo marco con FDC firmado y activo','Carta de intención con MinCultura (en renovación jun 2026)','Primer contacto formal con ACMI — derivó en la Cumbre 2026','8 aliados activos en el directorio de stakeholders'],
+    leccion:'La relación con ACMI empezó como una exploración de contacto — convertirla en la Cumbre 2026 fue el mayor salto estratégico de este hito.',
+  },
+  'Piloto Eje': {
+    cuando:'Q4 2024', descripcion:'Primer piloto audiovisual en el Eje Cafetero. Validación del modelo de producción territorial.',
+    logros:['Piloto «Eje» completado: 5 días de rodaje, material editado','Modelo de producción territorial validado y documentado','Relaciones con comunidades del Eje establecidas para proyectos futuros','Material de muestra que abrió convocatorias 2025 con FDC'],
+    leccion:'El piloto mostró que los rodajes en territorio rural necesitan el doble de tiempo logístico. Eso cambió cómo planificamos Rutas Cafeteras.',
+  },
+  'Alianzas ministerio': {
+    cuando:'Q1 2025', descripcion:'Convenio firmado con MinCultura y RTVC. Respaldo institucional para expansión.',
+    logros:['Convenio marco con MinCultura activo','Relación con RTVC establecida para distribución de contenido','Acceso a convocatorias cerradas de financiamiento público','Credencial institucional que abre puertas a cooperación internacional'],
+    leccion:'El proceso de firma tomó 5 meses. Para la renovación en junio iniciamos gestión con 4 meses de anticipación — nunca más esperar el último mes.',
+  },
+  'Modelo financiero': {
+    cuando:'Q1 2025', descripcion:'Plan financiero 2025-2030 validado por directivos. Proyecciones y fuentes de ingreso definidas.',
+    logros:['Proyecciones 2025-2030 validadas y usadas como referencia en convocatorias','Mix de ingresos definido: 60% institucional · 30% comercial · 10% fondos','Política de reservas estratégicas aprobada y respetada','9+ meses de respiración mantenidos consistentemente'],
+    leccion:'Separar reservas estratégicas de caja operativa fue la mejor decisión financiera — nos protegió durante el trimestre de menor captación sin tocar el plan.',
+  },
+  'Equipo base': {
+    cuando:'Q2 2025', descripcion:'4 directoras + 2 externos clave contratados. Estructura organizacional operativa.',
+    logros:['4 gerencias activas: Comercial, Proyectos, Investigación, Audiovisual','Juan Carlos (Dir. Comercial y Financiera) lleva el control de caja con seguimiento semanal en Google Sheets','Manuales de funciones por cargo elaborados y distribuidos','Estructura lista para escalar a 8+ personas en 2027'],
+    leccion:'Definir los manuales de funciones antes de contratar fue clave — redujo ambigüedades y conflictos de rol en los primeros 6 meses.',
+  },
+  'Gobierno de datos': {
+    cuando:'Q3 2025', descripcion:'PostgreSQL + n8n + OpenClaw/Gentil activos. Infraestructura de datos consolidada.',
+    logros:['PostgreSQL con 18 tablas operativas y 554 contactos en stakeholders_master','n8n con 5 workflows activos (GM-01 a GM-04)','Gentil/OpenClaw conectado a todos los endpoints del Centro de Mando vía MCP','Este dashboard: datos en vivo, sin actualizaciones manuales'],
+    leccion:'Unificar todo en un solo VPS con EasyPanel redujo el overhead operativo. Self-hosted vs SaaS nos ahorra ~$200/mes y nos da trazabilidad total.',
+  },
+  'Narrativa pública': {
+    cuando:'Q1 2026', descripcion:'Marca posicionada en medios especializados y redes. Narrativa coherente con la visión 2030.',
+    logros:['Posicionamiento como agencia de investigación audiovisual territorial','184K de alcance en 30 días (GA, datos en vivo)','Narrativa «investigación que se convierte en historia» validada por aliados','Presencia en Eje, Risaralda y exploración del Caribe'],
+    leccion:'La narrativa que resonó fue más potente que «productora audiovisual» — el componente de investigación diferencia a La Falla de la competencia.',
+  },
+  'Cumbre ACMI (en curso)': {
+    cuando:'Jun 2026', descripcion:'Evento audiovisual nacional posicionado para 2026. Hito crítico para el posicionamiento institucional de La Falla.',
+    logros:['Programa del evento confirmado y publicado','12 de 15 invitados nacionales confirmados','Propuesta enviada a invitados internacionales','22M COP ejecutados sobre 65M presupuestados'],
+    leccion:'La credencial generada por la Cumbre ACMI abre puertas a cooperación internacional y consolida la red de aliados para la siguiente fase.',
+  },
+  'Laboratorio Risaralda': {
+    cuando:'Jul 2026', descripcion:'Laboratorio permanente de investigación territorial en Risaralda. Metodología validada y documentada.',
+    logros:['Talleres comunitarios completados','Documento de síntesis elaborado','Metodología territorial validada para replicar en Caribe','Material de referencia generado para futuras producciones'],
+    leccion:'La logística rural requiere el doble de tiempo de planeación. Este aprendizaje ya está integrado en la metodología para el territorio Caribe.',
+  },
+  'Memoria 2025': {
+    cuando:'May 2026', descripcion:'Publicación anual de procesos e impacto de La Falla.',
+    logros:['Memoria publicada con datos de impacto 2025','Material de posicionamiento institucional disponible','Contenido de los 23 documentos de GI integrado','Versión digital e impresa lista para aliados y convocatorias'],
+    leccion:'La Memoria debe arrancar en paralelo con el trabajo de campo, no después — el contenido en GI ya existe, solo se necesita el recurso editorial.',
+  },
+  'Red de aliados 2': {
+    cuando:'Q3 2026', descripcion:'Segunda red de alianzas: fondos privados, cooperación internacional y circuitos regionales. Pendiente de arranque.',
+    requisitos:['Cumbre ACMI completada — genera contactos internacionales y credencial de convocatoria','Laboratorio Risaralda finalizado — valida la metodología territorial que se va a replicar','Memoria 2025 publicada — respaldo institucional ante nuevos aliados','Captación Q2 (620M) alcanzada — demuestra viabilidad financiera a aliados privados'],
+    pasos:['Mapear fondos privados y cooperación internacional elegibles (post-Cumbre, agosto)','Diseñar propuesta de valor diferenciada por tipo de aliado: fondos, academia, sector privado','Lanzar campaña de alianzas en agosto-septiembre 2026 con Memoria como soporte','Cerrar 3 acuerdos formales antes de diciembre 2026'],
+  },
+  'Circuito Audiovisual': {
+    cuando:'Q1 2027', descripcion:'Circuito propio de festivales y distribución de contenido audiovisual de La Falla. Pendiente.',
+    requisitos:['Cumbre ACMI posicionada como referente — es la credencial del circuito','Laboratorio Risaralda activo generando contenido territorial de alta calidad','Al menos 5 piezas audiovisuales terminadas y listas para circular','Alianza con distribuidor nacional o plataforma de streaming para llegar al público'],
+    pasos:['Definir curatoría: qué tipo de contenido circula y con qué criterio editorial','Mapear festivales nacionales e internacionales elegibles para el primer año','Diseñar el modelo económico del circuito (cobro por proyección / co-producción / patrocinio)','Lanzar primera edición en Q1 2027 con al menos 4 ciudades ancla'],
+  },
+  'Territorio Caribe': {
+    cuando:'Q2 2027', descripcion:'Expansión territorial al norte del país: Barranquilla, Cartagena y Santa Marta. Exploración activa desde GI.',
+    requisitos:['Red de aliados 2 activa con al menos 1 contacto ancla en la región','Metodología territorial validada y documentada desde Risaralda','Circuito audiovisual con presencia confirmada en el Caribe','Financiamiento asegurado para operación de 3 meses en nuevo territorio'],
+    pasos:['Completar la exploración de GI: convertir contactos abiertos en aliados formales','Identificar aliado ancla en la región: academia, institución cultural o colectivo local','Diseñar plan de entrada: piloto de 3 meses en una ciudad antes de escalar','Lanzar presencia en 3 ciudades del Caribe en Q3 2027 con equipo local coordinado'],
+  },
+  'Escalado nacional': {
+    cuando:'2028-2030', descripcion:'Presencia consolidada en 5+ ciudades colombianas. Objetivo final de la visión 2030.',
+    requisitos:['Territorio Caribe operativo con al menos 1 producción completada','Circuito audiovisual con 2 ediciones anuales exitosas','Modelo financiero diversificado y autosostenible sin depender de una sola fuente','Equipo de 12+ personas con liderazgos regionales autónomos'],
+    pasos:['Seleccionar las 5 ciudades ancla basadas en los datos acumulados de GI','Estructurar alianzas regionales en cada ciudad: academia + sector público + privado','Contratar coordinadores territoriales con raíz cultural en cada región','Posicionar a La Falla D.F. como el referente nacional de investigación audiovisual','Alcanzar autosostenibilidad en todas las sedes para cierre de 2030'],
+  },
+};
 const SEG_STATE = { done:'✓ Completo', prog:'◐ En curso', late:'⚠ Retrasado', '':'○ Pendiente' };
 const SEG_COLOR = { done:'#00FF41', prog:'var(--ink-3)', late:'#e89c2b', '':'var(--mute)' };
 
@@ -987,10 +1068,9 @@ function BranchRail({ active, onPick }){
       <div className="rail-exec">
         <div className="rex-eye"><span className="gentil-brand-name">Gentil</span> · lectura ejecutiva</div>
 
-        {ops && ops.length > 0 && (
-          <div className="rex-block">
-            <div className="rex-lbl">Oportunidades · alto ADN</div>
-            {ops.slice(0, 6).map(function(o){
+        <div className="rex-block">
+          <div className="rex-lbl">Oportunidades · alto ADN</div>
+          {ops && ops.length > 0 ? ops.slice(0, 6).map(function(o){
               var at = AIRTABLE_INTERFACE_URL;
               return (
                 <div key={o.id} className={'rex-opp' + (o.url ? ' is-live' : '')}>
@@ -1016,9 +1096,12 @@ function BranchRail({ active, onPick }){
                   )}
                 </div>
               );
-            })}
-          </div>
-        )}
+            }) : (
+            <div style={{padding:'10px 0 4px', fontSize:11, color:'var(--mute)', lineHeight:1.5}}>
+              Sin convocatorias activas · <a href={AIRTABLE_INTERFACE_URL} target="_blank" rel="noopener noreferrer" style={{color:'var(--falla)', textDecoration:'none'}}>Ver en Airtable →</a>
+            </div>
+          )}
+        </div>
 
         <div className="rex-block rex-focus">
           <div className="rex-lbl">Foco · Esta semana</div>

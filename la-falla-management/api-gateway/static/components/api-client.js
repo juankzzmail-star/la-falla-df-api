@@ -278,7 +278,7 @@
       risks:          BASE + '/risks',
       health:         BASE + '/dashboard/health/services',
       executive_feed: BASE + '/dashboard/openclaw-executive-feed',
-      oportunidades:  BASE + '/oportunidades?solo_vigentes=true&limit=8',
+      oportunidades:  BASE + '/oportunidades?limit=8',
       // change rebuild-onboarding-hub: the completeness interview drives the OnboardingHub cards +
       // the InterviewBanner. This key was never fetched, so useApiData('interview') was always null
       // and the whole interview UI was dead code in the browser.
