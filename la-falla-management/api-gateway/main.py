@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse
 from .routers import goals, plans, tasks, health, dashboard
 from .routers import risks, roadmap, financial, inbox, projects, stakeholders, chat, strategy, rag
 from .routers import edt_onboarding, oportunidades, interview
+from .db import SessionLocal
+from .models import Project, Deliverable
 
 API_KEY = os.environ.get("FASTAPI_GM_API_KEY") or os.environ.get("FASTAPI_API_KEY", "")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
@@ -26,8 +28,47 @@ def verify_key(key: str = Security(api_key_header)):
     return key
 
 
+def _seed_demo_projects():
+    """Insert four representative projects + deliverables when the table is empty on startup.
+    Fires once per fresh deploy; subsequent restarts skip it because the table is non-empty.
+    Remove after real projects are entered via the dashboard."""
+    DEMO = [
+        {"codigo": "rc02",   "nombre": "Rutas Cafeteras 02",    "area": "Proyectos",     "presupuesto": 120000000, "ejecutado": 86400000},
+        {"codigo": "pileje",  "nombre": "Piloto Eje",            "area": "Audiovisual",   "presupuesto": 45000000,  "ejecutado": 27900000},
+        {"codigo": "labris",  "nombre": "Laboratorio Risaralda", "area": "Investigacion", "presupuesto": 30000000,  "ejecutado": 18000000},
+        {"codigo": "acmi26",  "nombre": "Cumbre ACMI 2026",      "area": "Comercial",     "presupuesto": 65000000,  "ejecutado": 22100000},
+    ]
+    ENTREGABLES = {
+        "rc02":   [("Rough cut episodio 1", True, 0), ("Guion episodio 2", True, 1),
+                   ("Rodaje episodio 2 (día 3/5)", False, 2), ("Post-producción ep. 1", False, 3),
+                   ("Entrega final ep. 1", False, 4)],
+        "pileje":  [("Casting confirmado", True, 0), ("Locaciones scout", True, 1),
+                    ("Rodaje (día 3/5)", False, 2), ("Edición piloto", False, 3)],
+        "labris":  [("Mapeo territorial", True, 0), ("Talleres comunitarios (4/6)", False, 1),
+                    ("Documento síntesis", False, 2)],
+        "acmi26":  [("Programa confirmado", True, 0), ("Invitados nacionales", True, 1),
+                    ("Invitados internacionales", False, 2), ("Producción evento", False, 3),
+                    ("Cobertura audiovisual", False, 4)],
+    }
+    try:
+        with SessionLocal() as db:
+            if db.query(Project).count() > 0:
+                return
+            for d in DEMO:
+                p = Project(codigo=d["codigo"], nombre=d["nombre"], area=d["area"],
+                            presupuesto=d["presupuesto"], ejecutado=d["ejecutado"], estado="activo")
+                db.add(p)
+                db.flush()
+                for titulo, completado, orden in ENTREGABLES[d["codigo"]]:
+                    db.add(Deliverable(project_id=p.id, titulo=titulo, completado=completado, orden=orden))
+            db.commit()
+    except Exception:
+        pass  # DB not ready yet (e.g. first-boot before migrations); skip silently.
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _seed_demo_projects()
     # change auto-import-google-tasks: keep the Pulso live by reimporting Google Tasks on a cadence.
     bg_tasks = []
     if tasks.auto_import_enabled():
