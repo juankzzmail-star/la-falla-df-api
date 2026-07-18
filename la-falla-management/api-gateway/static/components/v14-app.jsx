@@ -3910,6 +3910,10 @@ function App() {
   const milestones = useApiData('milestones');
 
   const hasActiveStrategy = (Array.isArray(milestones) && milestones.length > 0) || (interviewData && interviewData.completitud_pct === 100);
+  // Wait for at least one data source to arrive before deciding which screen to show.
+  // Without this gate, both milestones and interviewData are null on first render → hasActiveStrategy=false
+  // → OnboardingHub flashes for one frame before real data arrives.
+  const dataReady = milestones !== null || interviewData !== null;
 
   useEffect(()=>{ window.__openProjects = ()=>setProjects(true); return ()=>{ delete window.__openProjects; }; },[]);
 
@@ -4006,6 +4010,8 @@ function App() {
     const b = window.__fx.enter(wallRef.current, '.rail > *', { y:14, stagger:0.06, d:0.5, delay:0.15 });
     return ()=>{ a && a.revert(); b && b.revert(); };
   },[]);
+
+  if (!dataReady) return null;
 
   if (!hasActiveStrategy && !unlockedHub) {
     // change rebuild-onboarding-hub: the hub owns its interview modal and top bar; it consumes the
