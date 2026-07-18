@@ -411,7 +411,7 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
           {tab === 'directorio' && (
             <div className="sb-contacts">
               {pageContacts.map(c => (
-                <div key={c.id} className="sb-contact">
+                <div key={c.id} className="sb-contact" style={{cursor:'pointer'}} onClick={()=>setStkView(c)}>
                   <div className="sb-c-avatar">{(c.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2) || '—'}</div>
                   <div className="sb-c-info">
                     <div className="sb-c-name">{c.name || 'Sin nombre'}</div>
@@ -424,9 +424,8 @@ function Sidebar({ open, onClose, inbox, setInbox, contacts, setContacts, onEdit
                     </div>
                   </div>
                   <div className="sb-item-acts">
-                    <button className="sb-act-btn" onClick={()=>setStkView(c)} title="Ver perfil">◉</button>
-                    <button className="sb-act-btn" onClick={()=>{ onClose(); onEditStakeholder(c); }} title="Editar">✎</button>
-                    <button className="sb-act-btn sb-act-del" onClick={()=>deleteContact(c.id)} title="Eliminar">×</button>
+                    <button className="sb-act-btn" onClick={e=>{ e.stopPropagation(); onClose(); onEditStakeholder(c); }} title="Editar">✎</button>
+                    <button className="sb-act-btn sb-act-del" onClick={e=>{ e.stopPropagation(); deleteContact(c.id); }} title="Eliminar">×</button>
                   </div>
                 </div>
               ))}
@@ -460,56 +459,53 @@ function StakeholderViewModal({ contact, onClose, onEdit }){
     ? (contact.linkedin.startsWith('http') ? contact.linkedin : `https://${contact.linkedin}`)
     : null;
   return (
-    <div className="cap-scrim" onClick={onClose}>
-      <div className="stk-box" onClick={e=>e.stopPropagation()}>
-        <div className="cap-hd">
-          <span className="cap-eye">👤 PERFIL</span>
-          <button className="cap-close" onClick={onClose}>×</button>
-        </div>
-        <div className="stk-view-hero">
+    <div className="stk-view-scrim" onClick={onClose}>
+      <div className="stk-view-card" onClick={e=>e.stopPropagation()}>
+        <div className="stk-view-top">
           <div className="stk-view-av">{initials}</div>
-          <div style={{flex:1,minWidth:0}}>
+          <div className="stk-view-hd-body">
             <div className="stk-view-name">{contact.name||'—'}</div>
             {contact.rol && <div className="stk-view-rol">{contact.rol}</div>}
-            <div className="stk-view-badge">{contact.type||'Sin clasificar'}</div>
+            <span className="stk-view-badge">{contact.type||'Sin clasificar'}</span>
           </div>
-          {li && (
-            <a href={li} target="_blank" rel="noopener noreferrer" className="stk-li-open stk-li-hero" title="Abrir LinkedIn">↗</a>
-          )}
+          <button className="stk-view-close" onClick={onClose}>×</button>
         </div>
-        <div className="stk-view-grid">
+        <div className="stk-view-body">
           {contact.phone && (
-            <div className="stk-view-item">
-              <div className="stk-view-label">Teléfono</div>
+            <div className="stk-view-row">
+              <span className="stk-view-lbl">Teléfono</span>
               <a href={`tel:${contact.phone.replace(/\s/g,'')}`} className="stk-view-val stk-view-link">{contact.phone}</a>
             </div>
           )}
           {contact.email && (
-            <div className="stk-view-item">
-              <div className="stk-view-label">Correo</div>
+            <div className="stk-view-row">
+              <span className="stk-view-lbl">Correo</span>
               <a href={`mailto:${contact.email}`} className="stk-view-val stk-view-link">{contact.email}</a>
             </div>
           )}
           {contact.ubicacion && (
-            <div className="stk-view-item">
-              <div className="stk-view-label">Ubicación</div>
-              <div className="stk-view-val">{contact.ubicacion}</div>
+            <div className="stk-view-row">
+              <span className="stk-view-lbl">Ubicación</span>
+              <span className="stk-view-val">{contact.ubicacion}</span>
             </div>
           )}
           {li && (
-            <div className="stk-view-item">
-              <div className="stk-view-label">LinkedIn</div>
-              <a href={li} target="_blank" rel="noopener noreferrer" className="stk-view-val stk-view-link">Ver perfil en LinkedIn →</a>
+            <div className="stk-view-row">
+              <span className="stk-view-lbl">LinkedIn</span>
+              <a href={li} target="_blank" rel="noopener noreferrer" className="stk-view-val stk-view-link">Ver perfil →</a>
             </div>
           )}
           {contact.observaciones && (
-            <div className="stk-view-item stk-view-full">
-              <div className="stk-view-label">Observaciones</div>
-              <div className="stk-view-val stk-view-obs">{contact.observaciones}</div>
+            <div className="stk-view-row stk-view-obs-row">
+              <span className="stk-view-lbl">Notas</span>
+              <span className="stk-view-val stk-view-obs">{contact.observaciones}</span>
             </div>
           )}
+          {!contact.phone && !contact.email && !contact.ubicacion && !li && !contact.observaciones && (
+            <div className="stk-view-empty">Sin datos de contacto registrados</div>
+          )}
         </div>
-        <div className="stk-foot">
+        <div className="stk-view-ft">
           <button className="stk-cancel" onClick={onClose}>Cerrar</button>
           {onEdit && <button className="stk-save" onClick={()=>{ onClose(); onEdit(contact); }}>Editar</button>}
         </div>

@@ -3121,7 +3121,7 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
 .sb-act-del:hover{border-color:var(--crit); color:var(--crit)}
 .sb-contact{position:relative}
 
-/* LinkedIn open button (used in edit modal and view modal) */
+/* LinkedIn open button (edit modal) */
 .stk-li-open{
   width:32px; height:32px; border-radius:7px; flex-shrink:0;
   border:1px solid #2a2a2a; color:#9a9a94; background:transparent;
@@ -3129,37 +3129,71 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
   transition:all .15s; cursor:pointer;
 }
 .stk-li-open:hover{border-color:var(--falla); color:var(--falla); background:rgba(0,255,65,.06)}
-.stk-li-hero{width:36px; height:36px; font-size:16px}
 
-/* Stakeholder view-only modal */
-.stk-view-hero{
-  display:flex; align-items:center; gap:14px;
-  padding:14px 0 18px; border-bottom:1px solid #1e1e1e; margin-bottom:14px;
+/* Stakeholder view-only modal — forced dark, independent of theme */
+.stk-view-scrim{
+  position:fixed; inset:0; z-index:70;
+  background:rgba(0,0,0,.75);
+  display:flex; align-items:center; justify-content:center;
+  padding:24px;
+  animation:fade-in .18s ease;
+}
+.stk-view-card{
+  background:#161616; border:1px solid #262626;
+  border-radius:16px;
+  box-shadow:0 24px 72px rgba(0,0,0,.8), 0 0 0 1px rgba(0,255,65,.04);
+  width:min(440px,100%);
+  overflow:hidden;
+  animation:sug-in .25s cubic-bezier(.2,.7,.2,1) both;
+}
+.stk-view-top{
+  display:flex; align-items:flex-start; gap:14px;
+  padding:20px 20px 18px; border-bottom:1px solid #222;
 }
 .stk-view-av{
-  width:52px; height:52px; border-radius:50%; flex-shrink:0;
-  background:#1a1a1a; border:2px solid var(--falla);
+  width:48px; height:48px; border-radius:50%; flex-shrink:0;
+  background:#0b1a0b; border:2px solid var(--falla);
   display:grid; place-items:center;
-  font-family:var(--f-title); font-size:18px; font-weight:700; color:var(--falla);
-  letter-spacing:.05em;
+  font-family:var(--f-title); font-size:17px; font-weight:700;
+  color:var(--falla); letter-spacing:.05em;
 }
-.stk-view-name{font-family:var(--f-title); font-size:15px; font-weight:700; color:#f4f4f0; letter-spacing:.03em}
-.stk-view-rol{font-size:11px; color:var(--mute); margin-top:2px}
+.stk-view-hd-body{flex:1; min-width:0;}
+.stk-view-name{font-family:var(--f-title); font-size:14px; font-weight:700; color:#ededea; letter-spacing:.03em;}
+.stk-view-rol{font-size:11px; color:#5a5a5a; margin-top:3px;}
 .stk-view-badge{
-  display:inline-block; margin-top:5px;
-  padding:2px 8px; border-radius:20px; font-size:9px; font-weight:700; letter-spacing:.08em;
-  background:#1a2a1a; border:1px solid #2a3a2a; color:var(--falla); font-family:var(--f-title);
+  display:inline-block; margin-top:7px;
+  padding:2px 9px; border-radius:20px;
+  font-size:9px; font-weight:700; letter-spacing:.08em;
+  background:#0b1a0b; border:1px solid #1a3a1a;
+  color:var(--falla); font-family:var(--f-title);
 }
-.stk-view-grid{
-  display:grid; grid-template-columns:1fr 1fr; gap:10px 16px; margin-bottom:4px;
+.stk-view-close{
+  width:28px; height:28px; border-radius:6px; flex-shrink:0;
+  color:#4a4a4a; font-size:18px; border:1px solid #262626;
+  transition:all .15s; line-height:1;
 }
-.stk-view-item{display:flex; flex-direction:column; gap:3px}
-.stk-view-full{grid-column:1/-1}
-.stk-view-label{font-size:9px; font-weight:700; letter-spacing:.08em; color:var(--mute); font-family:var(--f-title); text-transform:uppercase}
-.stk-view-val{font-size:12px; color:#d4d4d0; word-break:break-word}
-.stk-view-link{color:var(--falla); text-decoration:none; transition:opacity .15s}
-.stk-view-link:hover{opacity:.8; text-decoration:underline}
-.stk-view-obs{white-space:pre-line; line-height:1.5; color:#a0a09c; font-size:11px}
+.stk-view-close:hover{border-color:var(--falla); color:var(--falla);}
+.stk-view-body{padding:4px 20px 6px; display:flex; flex-direction:column;}
+.stk-view-row{
+  display:flex; align-items:baseline; gap:12px;
+  padding:10px 0; border-bottom:1px solid #1e1e1e;
+}
+.stk-view-row:last-child{border-bottom:0;}
+.stk-view-lbl{
+  font-family:var(--f-title); font-size:9px; font-weight:700;
+  letter-spacing:.08em; color:#444; text-transform:uppercase;
+  min-width:76px; flex-shrink:0;
+}
+.stk-view-val{font-size:12px; color:#c0c0bc; word-break:break-word; flex:1;}
+.stk-view-link{color:var(--falla); text-decoration:none; transition:opacity .15s;}
+.stk-view-link:hover{opacity:.75; text-decoration:underline;}
+.stk-view-obs{white-space:pre-line; line-height:1.6; color:#787874; font-size:11px;}
+.stk-view-obs-row{align-items:flex-start;}
+.stk-view-empty{color:#383838; font-size:12px; padding:20px 0; text-align:center;}
+.stk-view-ft{
+  display:flex; justify-content:flex-end; gap:10px;
+  padding:14px 20px; border-top:1px solid #222;
+}
 
 /* Edit inline for bandeja notes */
 .sb-edit-input{
