@@ -1974,7 +1974,7 @@ function ClawDrawer({ open, onClose }){
               </svg>
             </button>
             <input type="file" ref={fileRef} style={{display:'none'}}
-                   accept="image/*,.pdf,.xlsx,.csv,.txt,.js,.jsx,.ts,.tsx,.py,.json,.md,.sql,.html,.css"
+                   accept=".pdf,.doc,.docx,.txt,.md,.xlsx,.xls,.csv,.pptx,.js,.jsx,.ts,.tsx,.py,.json,.sql,.html,.css,image/*"
                    onChange={e=>{ if(e.target.files[0]){ handleFile(e.target.files[0]); e.target.value=''; } }}/>
             <textarea ref={inputRef} value={input} onChange={handleInputChange} onKeyDown={onKey}
               placeholder={recording ? '🔴 Grabando… habla en español' : 'Pregunta, escribe / para comandos o adjunta archivo…'} rows={1}/>
@@ -3392,6 +3392,7 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
   const chatRef = React.useRef(null);
 
   const [upload, setUpload] = useState(null);   // null | {stage:'proc'|'ok'|'err', text}
+  const [driveLink, setDriveLink] = useState(''); // change hub-drive-attach
   const fileRef = React.useRef(null);
   const hubRef = React.useRef(null);
 
@@ -3653,6 +3654,35 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
     }
   };
 
+  // change hub-drive-attach: unified accept list (= dashboard "Subir recurso") + Drive path.
+  // Same pipeline, same visible states; the Drive original is never modified.
+  const HUB_ACCEPT_LIST = '.pdf,.doc,.docx,.txt,.md,.xlsx,.xls,.csv,.pptx,.js,.jsx,.ts,.tsx,.py,.json,.sql,.html,.css,image/*';
+  const handleDriveAttach = async (e) => {
+    e.preventDefault();
+    const link = driveLink.trim();
+    if (!link) return;
+    setUpload({ stage:'proc', text:'Trayendo el documento desde Drive — la cascada real está corriendo…' });
+    try {
+      const r = await hubApi('/strategy/ingest-drive', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ link, intent:'plan' }),
+      });
+      const data = await r.json().catch(() => null);
+      if (r.ok) {
+        setDriveLink('');
+        setUpload({ stage:'ok', text:'✓ Documento de Drive integrado por la cascada — re-diagnosticando los paneles…' });
+        if (window.__CM_REFRESH__) window.__CM_REFRESH__();
+        setTimeout(() => setUpload(null), 7000);
+      } else {
+        const detail = data && (data.detail || data.message);
+        setUpload({ stage:'err', text:`⚠ Drive no entregó el documento (HTTP ${r.status}${detail ? ': ' + String(detail).slice(0,160) : ''}). Nada se guardó.` });
+      }
+    } catch (err) {
+      setUpload({ stage:'err', text:'⚠ Error de conexión con Drive — nada se guardó.' });
+    }
+  };
+
   const renderMd = (content) => {
     if (window.marked && typeof window.marked.parse === 'function') return { __html: window.marked.parse(content) };
     return { __html: String(content).replace(/\n/g, '<br/>') };
@@ -3825,14 +3855,25 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
           </form>
         </div>
 
-        {/* Real ingestion: /strategy/ingest-resource (the cascade), never the chat */}
+        {/* Real ingestion: /strategy/ingest-resource (the cascade), never the chat.
+            change hub-drive-attach: second path "Desde Drive" -> /strategy/ingest-drive, same
+            pipeline, same visible states; unified accept list (= dashboard "Subir recurso"). */}
         <div className="hub-upload" data-hub-card="">
           <button className="hub-btn" onClick={() => fileRef.current && fileRef.current.click()} disabled={upload && upload.stage === 'proc'}>
             Subir documento de estrategia
           </button>
           <input type="file" ref={fileRef} style={{ display:'none' }} onChange={handleUpload}
-                 accept=".pdf,.doc,.docx,.txt,.md,.xlsx,.xls,.csv,.pptx"/>
+                 accept={HUB_ACCEPT_LIST}/>
           <span className="hub-upload-sub">activa la cascada real — llena múltiples paneles a la vez</span>
+          <form className="hub-drive-row" onSubmit={handleDriveAttach}>
+            <input className="hub-input" type="text" value={driveLink}
+                   onChange={e => setDriveLink(e.target.value)}
+                   placeholder="…o pega un enlace de Google Drive"
+                   disabled={upload && upload.stage === 'proc'}/>
+            <button type="submit" className="hub-btn" disabled={(upload && upload.stage === 'proc') || !driveLink.trim()}>
+              Desde Drive →
+            </button>
+          </form>
           {upload && (
             <div className={`hub-upload-status ${upload.stage}`}>
               {upload.stage === 'proc' && <span className="hub-spinner"/>}

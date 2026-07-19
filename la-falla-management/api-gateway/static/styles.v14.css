@@ -4158,3 +4158,7 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
   margin-bottom: 12px;
 }
 
+
+/* ---- Desde Drive (change hub-drive-attach) ---- */
+.hub-drive-row{display:flex; gap:8px; margin-top:10px; width:100%; max-width:520px}
+.hub-drive-row .hub-input{flex:1}

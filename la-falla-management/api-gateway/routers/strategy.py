@@ -56,6 +56,47 @@ class ResetRequest(BaseModel):
     password: str
 
 
+# change hub-drive-attach: ONE unified accept list for both upload surfaces (dashboard "Subir
+# recurso" + Hub) — union of the two previous lists + common images; nothing regresses.
+ALLOWED_RESOURCE_EXTS = {
+    ".pdf", ".doc", ".docx", ".txt", ".md", ".xlsx", ".xls", ".csv", ".pptx",
+    ".js", ".jsx", ".ts", ".tsx", ".py", ".json", ".sql", ".html", ".css",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+}
+
+
+class DriveIngestRequest(BaseModel):
+    link: str
+    intent: str = "obs"
+
+
+class _DriveUpload:
+    """Duck-typed stand-in for FastAPI's UploadFile — ingest_resource only uses filename,
+    content_type and await read(), so Drive bytes ride the exact same pipeline (design D2)."""
+    def __init__(self, filename: str, data: bytes):
+        self.filename = filename
+        self.content_type = ""
+        self._data = data
+
+    async def read(self) -> bytes:
+        return self._data
+
+
+@router.post("/ingest-drive")
+async def ingest_drive(body: DriveIngestRequest, db: Session = Depends(get_db)):
+    """Attach a Google Drive file into the standard ingestion pipeline (change hub-drive-attach).
+    Read-only: the Drive original is never touched. Server-side guards: personal-data subtree
+    refused (403), unified extension list enforced (400), honest 503 when the seam lacks creds."""
+    from . import _gdrive
+    name, data = _gdrive.fetch(body.link)
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in ALLOWED_RESOURCE_EXTS:
+        raise HTTPException(400, f"Tipo de archivo no soportado ({ext or 'sin extensión'}). "
+                                 f"Aceptados: {', '.join(sorted(ALLOWED_RESOURCE_EXTS))}")
+    return await ingest_resource(file=_DriveUpload(name, data), intent=body.intent,
+                                 url="", filename_hint=name, db=db)
+
+
 INTENT_LABELS = {
     "estrategia": "Cargar Estrategia (metas → planes → tareas)",
     "plan": "Modificar Plan Estratégico",
