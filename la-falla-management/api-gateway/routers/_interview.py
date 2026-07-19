@@ -327,7 +327,9 @@ def _write_kpi_areas(db, norm):
 def _detect_planes(db):
     n = _count(db, "SELECT COUNT(*) FROM plans")
     if n == 0:
-        return "ok", []  # absence of plans is the cascade's job, not a CEO gap
+        # Nothing to derive from yet: the cascade has not produced plans. "waiting" — never "ok",
+        # so an empty system cannot report this domain as complete (vacuous truth).
+        return "waiting", []
     thin = _count(db, "SELECT COUNT(*) FROM plans WHERE responsable IS NULL OR fecha_fin_planificada IS NULL")
     return ("thin", []) if thin else ("ok", [])
 
@@ -346,6 +348,9 @@ def _noop_write(db, norm):
 def _detect_tareas(db):
     n_tasks = _count(db, "SELECT COUNT(*) FROM tasks")
     n_active = _count(db, "SELECT COUNT(*) FROM plans WHERE estado = 'activo'")
+    if n_tasks == 0 and n_active == 0:
+        # No tasks and no active plans to break down: waiting on the cascade, not complete.
+        return "waiting", []
     if n_tasks == 0 and n_active > 0:
         return "thin", []
     return "ok", []
@@ -451,13 +456,19 @@ def parse_freetext_answer(domain, text_answer):
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 def build_interview(db):
-    """Detect thin/empty domains and return the question queue (does not persist)."""
+    """Detect thin/empty/waiting domains and return the question queue (does not persist)."""
     questions = []
+    domain_status = {}
     domains_ok = 0
     for domain, spec in SPECIALISTS.items():
         status, detail = spec["detect"](db)
+        domain_status[domain] = status
         if status == "ok":
             domains_ok += 1
+            continue
+        if status == "waiting":
+            # Cascade-derived domain with nothing to derive from: there is no question the CEO
+            # can answer, and it must never count toward completeness (empty DB reads 0%).
             continue
         grupo = spec["group_when_empty"] if status == "empty" else spec["group_when_thin"]
         if grupo == "gap":
@@ -474,6 +485,7 @@ def build_interview(db):
         "questions": questions,
         "completitud_pct": round(domains_ok / total * 100) if total else 0,
         "domains_total": total, "domains_ok": domains_ok,
+        "domain_status": domain_status,
     }
 
 

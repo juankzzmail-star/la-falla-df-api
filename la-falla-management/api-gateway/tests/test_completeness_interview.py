@@ -107,9 +107,18 @@ def _rows(client, sql, **params):
 
 
 def _seed_all_ok(client):
-    """Seed every domain so the dashboard is complete (no questions)."""
+    """Seed every domain so the dashboard is GENUINELY complete (no questions, no waiting).
+
+    Includes a plan with responsible+dates and a task for it: since
+    fix-hub-vacuous-completeness, cascade-derived domains report 'waiting' (not 'ok')
+    when their tables are empty, so 100% requires real rows here too.
+    """
     _exec(client, "INSERT INTO strategic_goals (codigo, titulo, area, fecha_inicio, fecha_fin_meta, peso_porcentaje) "
                   "VALUES ('COM-1','Meta','Comercial', :fi, '2030-12-31', 40)", fi=date.today().isoformat())
+    _exec(client, "INSERT INTO plans (codigo, titulo, area, responsable, fecha_inicio, fecha_fin_planificada, estado) "
+                  "VALUES ('P-1','Plan','Comercial','Juan Carlos', :fi, '2026-12-31', 'activo')", fi=date.today().isoformat())
+    _exec(client, "INSERT INTO tasks (plan_id, titulo, area, estado, prioridad) "
+                  "VALUES (1, 'Tarea 1', 'Comercial', 'pendiente', 'media')")
     _exec(client, "INSERT INTO roadmap_milestones (titulo, orden, estado) VALUES ('Hito 1', 1, 'in_progress')")
     _exec(client, "INSERT INTO financial_snapshots (fecha, caja_operativa, reservas_estrategicas, credito_disponible, gasto_mensual_promedio, liquidez_total, meses_respiracion) "
                   "VALUES (:f, 5000000, 2000000, 1000000, 800000, 8000000, 10)", f=date.today().isoformat())
@@ -178,6 +187,52 @@ def test_full_dashboard_yields_no_questions(client):
     body = client.get("/api/interview", headers=H).json()
     assert body["questions"] == []
     assert body["completitud_pct"] == 100
+    assert all(v == "ok" for v in body["domain_status"].values())
+
+
+# ── Waiting states (change fix-hub-vacuous-completeness) ─────────────────────
+def test_empty_db_reports_zero_completeness_with_waiting_domains(client):
+    """Empty DB must read 0% — never 29% from vacuously-'ok' cascade domains."""
+    body = client.get("/api/interview", headers=H).json()
+    assert body["completitud_pct"] == 0
+    assert body["domains_ok"] == 0
+    assert body["domains_total"] == 7
+    ds = body["domain_status"]
+    assert len(ds) == 7
+    assert ds["planes"] == "waiting" and ds["tareas"] == "waiting"
+    assert all(v != "ok" for v in ds.values())
+    asked = {q["domain"] for q in body["questions"]}
+    assert "planes" not in asked and "tareas" not in asked
+
+
+def test_waiting_excluded_from_numerator_not_denominator(client):
+    """All non-cascade domains ok, plans/tasks empty -> 5/7 = 71%, never 100%."""
+    _exec(client, "INSERT INTO strategic_goals (codigo, titulo, area, fecha_inicio, fecha_fin_meta, peso_porcentaje) "
+                  "VALUES ('COM-1','Meta','Comercial', :fi, '2030-12-31', 40)", fi=date.today().isoformat())
+    _exec(client, "INSERT INTO roadmap_milestones (titulo, orden, estado) VALUES ('Hito 1', 1, 'in_progress')")
+    _exec(client, "INSERT INTO financial_snapshots (fecha, caja_operativa, reservas_estrategicas, credito_disponible, gasto_mensual_promedio, liquidez_total, meses_respiracion) "
+                  "VALUES (:f, 5000000, 2000000, 1000000, 800000, 8000000, 10)", f=date.today().isoformat())
+    _exec(client, "INSERT INTO risks (descripcion, area, impacto, probabilidad, nivel_riesgo, estado_mitigacion) "
+                  "VALUES ('Riesgo', 'Comercial', 3, 3, 9, 'monitoreado')")
+    for a in ("Comercial", "Proyectos", "Investigacion", "Audiovisual"):
+        _exec(client, "INSERT INTO area_kpi_config (area, kpi_code, label, target, period) "
+                      "VALUES (:a, 'K', 'KPI', 100, 'mensual')", a=a)
+    body = client.get("/api/interview", headers=H).json()
+    assert body["domains_ok"] == 5
+    assert body["completitud_pct"] == 71  # round(5/7*100)
+    assert body["domain_status"]["planes"] == "waiting"
+    assert body["domain_status"]["tareas"] == "waiting"
+
+
+def test_thin_paths_unchanged_once_data_exists(client):
+    """Regression: active plan with zero tasks stays 'thin'; complete plan reads 'ok'."""
+    _exec(client, "INSERT INTO plans (codigo, titulo, area, responsable, fecha_inicio, fecha_fin_planificada, estado) "
+                  "VALUES ('P-1','Plan','Comercial','Juan Carlos', :fi, '2026-12-31', 'activo')", fi=date.today().isoformat())
+    body = client.get("/api/interview", headers=H).json()
+    assert body["domain_status"]["planes"] == "ok"
+    assert body["domain_status"]["tareas"] == "thin"
+    asked = {q["domain"] for q in body["questions"]}
+    assert "tareas" in asked  # thin still asks, unchanged
 
 
 # ── Write-back + validation ───────────────────────────────────────────────────

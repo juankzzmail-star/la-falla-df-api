@@ -33,6 +33,9 @@ class InterviewOut(BaseModel):
     completitud_pct: int
     domains_total: int
     domains_ok: int
+    # Per-domain detection status: "ok" | "waiting" | "empty" | "thin". "waiting" marks
+    # cascade-derived domains with nothing to derive from — excluded from the numerator.
+    domain_status: Dict[str, str]
     questions: List[InterviewQuestion]
 
 

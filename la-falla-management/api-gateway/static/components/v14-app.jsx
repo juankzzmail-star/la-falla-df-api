@@ -3301,6 +3301,11 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
   const dataReady = !!window.__CM_DATA__;
   const questionFor = (key) => (iv && Array.isArray(iv.questions)) ? iv.questions.find(q => q.domain === key) : null;
   const estadoFor = (key) => {
+    // Prefer the API's per-domain status (distinguishes 'waiting' from genuine 'ok');
+    // fall back to question-absence inference for payloads without domain_status.
+    if (iv && iv.domain_status && iv.domain_status[key]) return iv.domain_status[key] === 'empty' ? 'empty'
+      : iv.domain_status[key] === 'thin' ? 'thin'
+      : iv.domain_status[key] === 'waiting' ? 'waiting' : 'ok';
     const q = questionFor(key);
     if (!q) return 'ok';
     return q.grupo === 'gap' ? 'empty' : 'thin';
@@ -3359,6 +3364,12 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
     const card = { key, estado, title: meta.title, icon: meta.icon, isPriority: key === priority, body:'', extras:null };
     if (q) {
       card.body = q.pregunta || '';
+    } else if (estado === 'waiting') {
+      const waitingBodies = {
+        planes: 'Se generarán automáticamente cuando cargues la estrategia.',
+        tareas: 'Se desglosarán de los planes cuando la cascada esté activa.',
+      };
+      card.body = waitingBodies[key] || 'Se activa con la Estrategia.';
     } else {
       const okBodies = {
         estrategia: 'Metas estratégicas activas en el marco 2026–2030.',
@@ -3378,10 +3389,10 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
     return card;
   };
 
-  const groups = { gap:[], enrich:[], ok:[] };
+  const groups = { gap:[], enrich:[], waiting:[], ok:[] };
   if (iv) HUB_DOMAINS.forEach(k => {
     const c = cardFor(k);
-    groups[c.estado === 'empty' ? 'gap' : c.estado === 'thin' ? 'enrich' : 'ok'].push(c);
+    groups[c.estado === 'empty' ? 'gap' : c.estado === 'thin' ? 'enrich' : c.estado === 'waiting' ? 'waiting' : 'ok'].push(c);
   });
 
   // ── Actions ────────────────────────────────────────────────────────────────
@@ -3524,11 +3535,15 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
   };
 
   // ── Render pieces ──────────────────────────────────────────────────────────
-  const renderCard = (card) => (
+  const renderCard = (card) => {
+    // Waiting cards are informational only: no answer form to open, so no button semantics.
+    const interactive = card.estado !== 'waiting';
+    return (
     <div key={card.key} data-hub-card="" data-testid={`hub-card-${card.key}`}
-         className={`hub-card hub-card--${card.estado}`} role="button" tabIndex={0}
-         onClick={() => openModal(card.key)}
-         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModal(card.key); }}>
+         className={`hub-card hub-card--${card.estado}`}
+         role={interactive ? 'button' : undefined} tabIndex={interactive ? 0 : undefined}
+         onClick={interactive ? () => openModal(card.key) : undefined}
+         onKeyDown={interactive ? (e) => { if (e.key === 'Enter' || e.key === ' ') openModal(card.key); } : undefined}>
       <div className="hub-card-top">
         <div className="hub-card-id">
           <span className="hub-ico">{card.icon}</span>
@@ -3538,7 +3553,7 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
       </div>
       <span className={`hub-state hub-state--${card.estado}`}>
         {card.estado === 'empty' && <span className="hub-state-dot"/>}
-        {card.estado === 'empty' ? 'VACÍO' : card.estado === 'thin' ? 'INCOMPLETO' : 'COMPLETO'}
+        {card.estado === 'empty' ? 'VACÍO' : card.estado === 'thin' ? 'INCOMPLETO' : card.estado === 'waiting' ? 'EN ESPERA' : 'COMPLETO'}
       </span>
 
       {card.key === 'riesgos' && (
@@ -3583,7 +3598,8 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
         <span className="hub-ai-badge" title="Análisis del cerebro profundo de Gentil sobre tus riesgos.">✦ Analizado por Gentil</span>
       )}
     </div>
-  );
+    );
+  };
 
   const rowInput = (props) => <input {...props} className={'hub-input' + (props.className ? ' ' + props.className : '')}/>;
 
@@ -3648,6 +3664,12 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
           <div className="hub-group">
             <div className="hub-group-label hub-group-label--enrich">INCOMPLETO · confirmar o completar</div>
             <div className="hub-grid">{groups.enrich.map(renderCard)}</div>
+          </div>
+        )}
+        {iv && groups.waiting.length > 0 && (
+          <div className="hub-group">
+            <div className="hub-group-label hub-group-label--waiting">EN ESPERA · se activa con la Estrategia</div>
+            <div className="hub-grid">{groups.waiting.map(renderCard)}</div>
           </div>
         )}
         {iv && groups.ok.length > 0 && (
