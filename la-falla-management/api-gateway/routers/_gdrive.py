@@ -79,7 +79,7 @@ def _metadata(svc, file_id: str) -> dict:
                                supportsAllDrives=True).execute()
     except Exception as e:
         raise HTTPException(403, (
-            f"No pude leer el archivo de Drive ({str(e)[:120]}). Verifica que esté compartido "
+            f"No pude leer el archivo de Drive ({str(e)[:600]}). Verifica que esté compartido "
             f"con {sa_email()} o con gerencia@lafalla.co."))
 
 
