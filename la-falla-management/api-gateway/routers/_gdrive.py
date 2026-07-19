@@ -104,6 +104,18 @@ def is_excluded(svc, meta: dict) -> bool:
     return False
 
 
+
+# Real-file mime -> extension, for Drive files whose NAME lacks one ("01. Marco misional"):
+# trust the mimeType Google declares instead of guessing from the name (change hub-drive-attach).
+_MIME_EXT = {
+    "application/pdf": ".pdf", "application/msword": ".doc", "application/vnd.ms-excel": ".xls",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "text/plain": ".txt", "text/csv": ".csv", "text/markdown": ".md",
+    "image/png": ".png", "image/jpeg": ".jpg",
+}
+
 def fetch(link_or_id: str) -> Tuple[str, bytes]:
     """Resolve, exclusion-check and download/export a Drive file. Returns (filename, bytes).
     403 on excluded subtree or no permission; 503 unconfigured; 400 on unparseable link."""
@@ -130,4 +142,6 @@ def fetch(link_or_id: str) -> Tuple[str, bytes]:
     done = False
     while not done:
         _, done = downloader.next_chunk()
+    if mime in _MIME_EXT and not name.lower().endswith(_MIME_EXT[mime]):
+        name += _MIME_EXT[mime]  # nameless-extension file: the declared mimeType is the truth
     return name, buf.getvalue()
