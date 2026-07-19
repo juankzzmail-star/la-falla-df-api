@@ -28,6 +28,7 @@ H = {"X-API-Key": "test-key-123"}
 _DDL = """CREATE TABLE daily_suggestions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, fecha DATE NOT NULL, tag TEXT NOT NULL,
     titulo TEXT NOT NULL, cuerpo TEXT, estado TEXT NOT NULL DEFAULT 'pendiente',
+    ref TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
 
 

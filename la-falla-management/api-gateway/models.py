@@ -270,6 +270,9 @@ class DailySuggestion(Base):
     titulo      = Column(Text, nullable=False)
     cuerpo      = Column(Text)
     estado      = Column(Text, nullable=False, default="pendiente")  # pendiente | aceptada | editada | eliminada
+    # change gentil-task-coverage: machine-readable target for coverage findings —
+    # JSON {"kind":"plan"|"hito","id":N,"area":...}; NULL on ordinary suggestions.
+    ref         = Column(Text)
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
 
 

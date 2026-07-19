@@ -5,7 +5,10 @@ from api_gateway.routers import strategy
 
 
 def test_reset_strategy_wrong_password(client):
-    res = client.delete(
+    # client.request instead of client.delete(json=): older/newer httpx disagree on delete(json=),
+    # request() works everywhere (change reset-task-reader-switch made these run locally again).
+    res = client.request(
+        "DELETE",
         "/api/strategy/reset",
         headers={"X-API-Key": "test-key-123"},
         json={"password": "wrong_password"},
@@ -18,7 +21,8 @@ def test_reset_strategy_correct_password(client, monkeypatch):
     monkeypatch.setattr(strategy, "DATABASE_URL", "sqlite://")
     monkeypatch.setattr(strategy, "RESET_PASSWORD", "Lafalladf8178.")
 
-    res = client.delete(
+    res = client.request(
+        "DELETE",
         "/api/strategy/reset",
         headers={"X-API-Key": "test-key-123"},
         json={"password": "Lafalladf8178."},
@@ -27,3 +31,4 @@ def test_reset_strategy_correct_password(client, monkeypatch):
     data = res.json()
     assert data["ok"] is True
     assert "cleared_tables" in data
+    assert "tasks_reader_off" in data  # change reset-task-reader-switch: reset reports the switch

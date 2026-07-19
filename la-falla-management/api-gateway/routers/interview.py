@@ -36,6 +36,8 @@ class InterviewOut(BaseModel):
     # Per-domain detection status: "ok" | "waiting" | "empty" | "thin". "waiting" marks
     # cascade-derived domains with nothing to derive from — excluded from the numerator.
     domain_status: Dict[str, str]
+    # Task reader switch state (change reset-task-reader-switch): {enabled, importing, last_import}.
+    tasks_reader: Dict[str, Any]
     questions: List[InterviewQuestion]
 
 

@@ -347,11 +347,17 @@ def _noop_write(db, norm):
 # ===== tareas / tasks (enrich-only) ==========================================
 def _detect_tareas(db):
     n_tasks = _count(db, "SELECT COUNT(*) FROM tasks")
-    n_active = _count(db, "SELECT COUNT(*) FROM plans WHERE estado = 'activo'")
-    if n_tasks == 0 and n_active == 0:
-        # No tasks and no active plans to break down: waiting on the cascade, not complete.
-        return "waiting", []
-    if n_tasks == 0 and n_active > 0:
+    if n_tasks == 0:
+        # change reset-task-reader-switch: with the reader OFF the absence of tasks is explained by
+        # the switch — waiting, regardless of active plans. The switch explains absence only: when
+        # local tasks exist, the real status below is reported no matter the switch state.
+        from .tasks import tasks_reader_enabled
+        if not tasks_reader_enabled(db):
+            return "waiting", []
+        n_active = _count(db, "SELECT COUNT(*) FROM plans WHERE estado = 'activo'")
+        if n_active == 0:
+            # No tasks and no active plans to break down: waiting on the cascade, not complete.
+            return "waiting", []
         return "thin", []
     return "ok", []
 
@@ -481,11 +487,21 @@ def build_interview(db):
             "pregunta": pregunta,
         })
     total = len(SPECIALISTS)
+    # change reset-task-reader-switch: surface the reader switch + import progress so the answer
+    # surface (Hub) can render the real reader state. Read-only — building the interview never
+    # writes the switch.
+    from .tasks import reader_importing, reader_last_import, tasks_reader_enabled
+    tasks_reader = {
+        "enabled": tasks_reader_enabled(db),
+        "importing": reader_importing(db),
+        "last_import": reader_last_import(db),
+    }
     return {
         "questions": questions,
         "completitud_pct": round(domains_ok / total * 100) if total else 0,
         "domains_total": total, "domains_ok": domains_ok,
         "domain_status": domain_status,
+        "tasks_reader": tasks_reader,
     }
 
 
@@ -504,6 +520,15 @@ def submit_answer(db, domain, answer):
             raise HTTPException(422, error)
 
         written = spec["write"](db, norm)
+
+        # change reset-task-reader-switch: the FIRST strategic goals wake the task reader with an
+        # immediate import (no 2-hour wait). Only the estrategia domain flips the switch.
+        if domain == "estrategia" and written:
+            from .tasks import enable_tasks_reader_and_import
+            try:
+                enable_tasks_reader_and_import(db)
+            except Exception:
+                db.rollback()  # never fail the answer over the switch; the loop self-heals later
 
         panel_id = spec["panel_id"]
         if panel_id:

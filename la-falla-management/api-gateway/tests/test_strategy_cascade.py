@@ -67,7 +67,7 @@ _DDL = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
     """CREATE TABLE daily_suggestions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, fecha DATE NOT NULL, tag TEXT NOT NULL, titulo TEXT NOT NULL,
-        cuerpo TEXT, estado TEXT NOT NULL DEFAULT 'pendiente', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
+        cuerpo TEXT, estado TEXT NOT NULL DEFAULT 'pendiente', ref TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
 ]
 
 

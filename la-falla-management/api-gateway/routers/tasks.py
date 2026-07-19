@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import os
-from datetime import date, datetime
+import threading
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 import httpx
@@ -367,7 +369,14 @@ def _import_google_tasks(db: Session) -> dict:
 @router.post("/import-google")
 def import_google(db: Session = Depends(get_db)):
     """Manual trigger for the inbound import (change import-google-tasks). The same core runs
-    automatically on a cadence (change auto-import-google-tasks). Honest 503 if the seam is unconfigured."""
+    automatically on a cadence (change auto-import-google-tasks). Honest 503 if the seam is unconfigured.
+    An explicit CEO call outranks the automatic gate: it re-enables the task reader (change
+    reset-task-reader-switch)."""
+    try:
+        set_tasks_reader(db, True)
+        db.commit()
+    except Exception:
+        db.rollback()  # app_config absent (bare test DB) — the import itself still runs
     return _import_google_tasks(db)
 
 
@@ -416,12 +425,102 @@ def link_tasks_hitos(db: Session = Depends(get_db)):
             "mensaje": f"{linked} de {len(rows)} tareas importadas vinculadas a su hito."}
 
 
+# --- Task reader switch (change reset-task-reader-switch) ---------------------------------------------
+# Persistent on/off gate for the Google Tasks READER, stored in app_config so it survives restarts AND
+# the strategy reset (app_config is not in TABLES_TO_CLEAR). Missing key = ON (pre-change behavior).
+# The switch only gates reads from Google Tasks — it never writes or deletes anything there.
+
+log = logging.getLogger("api_gateway.tasks")
+
+_READER_KEY = "tasks_reader_enabled"
+_IMPORTING_KEY = "tasks_reader_importing"
+_LAST_IMPORT_KEY = "tasks_reader_last_import"
+_IMPORTING_STALE_MIN = 15  # a marker older than this is a dead cycle, not a running one
+
+
+def _config_get(db, key):
+    try:
+        return db.execute(text("SELECT value, updated_at FROM app_config WHERE key = :k"),
+                          {"k": key}).fetchone()
+    except Exception:
+        # app_config absent (bare test DB) -> caller falls back to defaults. The rollback matters:
+        # without it the failed statement poisons the session and every later query in the same
+        # request dies with PendingRollbackError.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def _config_set(dbc, key, value):
+    """Portable upsert (SQLite + Postgres) against app_config. `dbc` is a Session or a Connection —
+    both expose execute(); the caller owns the commit."""
+    res = dbc.execute(text(
+        "UPDATE app_config SET value = :v, updated_at = CURRENT_TIMESTAMP WHERE key = :k"),
+        {"k": key, "v": value})
+    if not res.rowcount:
+        dbc.execute(text(
+            "INSERT INTO app_config (key, value, updated_at) VALUES (:k, :v, CURRENT_TIMESTAMP)"),
+            {"k": key, "v": value})
+
+
+def tasks_reader_enabled(db) -> bool:
+    row = _config_get(db, _READER_KEY)
+    return True if row is None else str(row[0]) != "0"
+
+
+def set_tasks_reader(dbc, on: bool):
+    _config_set(dbc, _READER_KEY, "1" if on else "0")
+
+
+def reader_importing(db) -> bool:
+    """True only while a cycle is running. The marker is cleared in a finally, and as a second guard
+    a marker older than _IMPORTING_STALE_MIN reads as false (process died mid-cycle)."""
+    row = _config_get(db, _IMPORTING_KEY)
+    if row is None or str(row[0]) != "1":
+        return False
+    ts = row[1]
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts)
+        except ValueError:
+            return True
+    if not isinstance(ts, datetime):
+        return True
+    now = datetime.now(timezone.utc) if ts.tzinfo else datetime.utcnow()
+    return (now - ts).total_seconds() < _IMPORTING_STALE_MIN * 60
+
+
+def reader_last_import(db):
+    row = _config_get(db, _LAST_IMPORT_KEY)
+    if row is None or not row[0]:
+        return None
+    try:
+        return json.loads(row[0])
+    except ValueError:
+        return None
+
+
+def enable_tasks_reader_and_import(db) -> bool:
+    """Idempotent OFF→ON: enable the reader and fire ONE immediate import cycle in a daemon thread
+    (the scheduled loop would otherwise wait up to AUTO_IMPORT_INTERVAL_MIN). Returns True when the
+    switch actually flipped. Single entry point — future ingestion paths (document load) MUST call
+    this instead of touching app_config directly."""
+    if tasks_reader_enabled(db):
+        return False
+    set_tasks_reader(db, True)
+    db.commit()
+    if auto_import_enabled():  # real DB only; sqlite/tests never spawn the thread
+        threading.Thread(target=auto_import_once, daemon=True).start()
+    return True
+
+
 # --- Automatic inbound import (change auto-import-google-tasks) ---------------------------------------
 # A background loop reimports the directors' Google Tasks on a cadence so the Pulso/semáforo stay live
 # without a manual POST. Off on sqlite (tests/dev) and when the interval is <= 0. A Postgres advisory
 # lock keeps a single replica importing per cycle (the upsert is idempotent regardless).
 
-log = logging.getLogger("api_gateway.tasks")
 _AUTO_IMPORT_LOCK_KEY = 1768465  # arbitrary stable key for pg_advisory_lock
 
 
@@ -453,16 +552,55 @@ def auto_import_once() -> dict:
                 return {"skipped": "locked-by-another-replica"}
         db = SessionLocal()
         try:
-            return _import_google_tasks(db)
-        except HTTPException as e:
-            if e.status_code == 503:
-                log.info("auto-import skipped: Google seam not configured")
-                return {"skipped": "google-no-config"}
-            raise
-        except Exception as e:  # a bad cycle must never kill the loop
-            db.rollback()
-            log.warning("auto-import cycle failed: %s", e)
-            return {"error": str(e)[:200]}
+            # change reset-task-reader-switch: the persistent switch gates every cycle. OFF with no
+            # strategy -> honest skip; OFF but strategy exists -> self-heal (at most one interval
+            # late) so any goal-writing path that missed the enable helper still wakes the reader.
+            if not tasks_reader_enabled(db):
+                try:
+                    n_goals = db.execute(text("SELECT COUNT(*) FROM strategic_goals")).scalar() or 0
+                except Exception:
+                    n_goals = 0
+                if n_goals == 0:
+                    log.info("auto-import skipped: task reader off, no strategy yet")
+                    return {"skipped": "reader-off"}
+                set_tasks_reader(db, True)
+                db.commit()
+            try:
+                _config_set(db, _IMPORTING_KEY, "1")
+                db.commit()
+            except Exception:
+                db.rollback()  # progress markers are best-effort — never block the import
+            try:
+                out = _import_google_tasks(db)
+                # change gentil-task-coverage: the coverage analysis rides every completed import
+                # cycle — best-effort, a coverage bug must never alter the result or kill the loop.
+                try:
+                    from ._coverage import refresh_coverage
+                    refresh_coverage(db)
+                except Exception as cov_err:
+                    db.rollback()
+                    log.warning("coverage refresh failed: %s", cov_err)
+                try:
+                    _config_set(db, _LAST_IMPORT_KEY, json.dumps(out, default=str))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                return out
+            except HTTPException as e:
+                if e.status_code == 503:
+                    log.info("auto-import skipped: Google seam not configured")
+                    return {"skipped": "google-no-config"}
+                raise
+            except Exception as e:  # a bad cycle must never kill the loop
+                db.rollback()
+                log.warning("auto-import cycle failed: %s", e)
+                return {"error": str(e)[:200]}
+            finally:
+                try:
+                    _config_set(db, _IMPORTING_KEY, "0")
+                    db.commit()
+                except Exception:
+                    db.rollback()
         finally:
             db.close()
     finally:

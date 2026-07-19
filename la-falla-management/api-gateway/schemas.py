@@ -170,7 +170,9 @@ class LinkMetasHitosOut(BaseModel):
 # ─── Tasks ───────────────────────────────────────────────────────────────────
 
 class TaskBase(BaseModel):
-    plan_id: int
+    # change gentil-task-coverage: optional — a DIRECT task can hang off a hito alone
+    # (milestone_id) with no plan, matching the nullable column and the direct-task model.
+    plan_id: Optional[int] = None
     titulo: str
     responsable: Optional[str] = None
     area: Optional[str] = None

@@ -326,6 +326,7 @@ def reset_strategy(req: ResetRequest):
     try:
         engine = create_engine(DATABASE_URL, pool_pre_ping=True)
         cleared = []
+        reader_off = False
         with engine.connect() as conn:
             for table in TABLES_TO_CLEAR:
                 try:
@@ -339,7 +340,20 @@ def reset_strategy(req: ResetRequest):
                         cleared.append(table)
                     except Exception:
                         pass  # tabla no existe aún
-        return {"ok": True, "cleared_tables": cleared, "message": "Estrategia reiniciada. El dashboard está en blanco."}
+            # change reset-task-reader-switch: silence the Google Tasks READER so the cleared tasks
+            # do not reappear on the next automatic import cycle. Google Tasks itself is untouched;
+            # the switch lives in app_config, which is deliberately NOT in TABLES_TO_CLEAR.
+            try:
+                from .tasks import set_tasks_reader
+                set_tasks_reader(conn, False)
+                conn.commit()
+                reader_off = True
+            except Exception:
+                conn.rollback()  # app_config missing — reset still succeeds, disclosed in payload
+        msg = ("Estrategia reiniciada. El dashboard está en blanco y el lector de tareas quedó apagado."
+               if reader_off else
+               "Estrategia reiniciada. El dashboard está en blanco (no se pudo apagar el lector de tareas).")
+        return {"ok": True, "cleared_tables": cleared, "tasks_reader_off": reader_off, "message": msg}
     except Exception as e:
         log.error("Error al reiniciar la estrategia: %s", str(e)[:200])
         raise HTTPException(status_code=500, detail="Error al reiniciar la estrategia.")

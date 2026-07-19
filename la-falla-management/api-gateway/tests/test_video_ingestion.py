@@ -29,7 +29,7 @@ CREATE TABLE document_chunks (
   embedding TEXT, metadata TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 """
 _DDL_SUGG = ("CREATE TABLE daily_suggestions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-             "fecha TEXT, tag TEXT, titulo TEXT, cuerpo TEXT, estado TEXT)")
+             "fecha TEXT, tag TEXT, titulo TEXT, cuerpo TEXT, estado TEXT, ref TEXT)")
 _DDL_INBOX = ("CREATE TABLE inbox_items (id INTEGER PRIMARY KEY AUTOINCREMENT, "
               "tipo TEXT, texto TEXT, origen TEXT, procesado BOOLEAN)")
 

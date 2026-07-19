@@ -379,6 +379,72 @@ function Lectura(){
     setTimeout(()=> setSugs(list => list.filter(s=>s.id!==id)), 320);
   };
 
+  // ── Coverage actions (change gentil-task-coverage) ────────────────────────
+  // Suggestions carrying `ref` ({kind:'plan'|'hito', id, area}) are Gentil's coverage findings:
+  // the CEO can add a task (POST /api/tasks — outbound Google routing is the existing path),
+  // leave a specification (POST /api/inbox), or leave it pending (no call — 'pendiente' IS that).
+  const COV_RESPONSABLES = ['Juan Carlos', 'Beto', 'Iván', 'Quinaya', 'Clementino'];
+  const COV_AREA_DIRECTOR = { Comercial:'Juan Carlos', Proyectos:'Beto', Audiovisual:'Iván', Investigacion:'Quinaya' };
+  const [covMode, setCovMode] = useState({});   // id -> 'task' | 'spec' | null
+  const [covForm, setCovForm] = useState({});   // id -> {titulo, responsable, fecha, spec}
+  const [covBusy, setCovBusy] = useState({});
+  const [covErr, setCovErr] = useState({});
+
+  const covRef = (s) => { try { return s.ref ? JSON.parse(s.ref) : null; } catch (e) { return null; } };
+  const covField = (id, field, val) => setCovForm(p => ({ ...p, [id]: { ...(p[id] || {}), [field]: val } }));
+  const covOpen = (s, mode) => {
+    const ref = covRef(s);
+    setCovErr(p => ({ ...p, [s.id]: '' }));
+    setCovMode(p => ({ ...p, [s.id]: mode }));
+    if (mode === 'task' && !(covForm[s.id] || {}).responsable) {
+      covField(s.id, 'responsable', COV_AREA_DIRECTOR[(ref && ref.area) || ''] || 'Clementino');
+    }
+  };
+
+  const covHeaders = () => {
+    const k = window.__API_KEY__ || '';
+    return { 'Content-Type': 'application/json', ...(k ? { 'X-API-Key': k } : {}) };
+  };
+  const covBase = () => (window.__API_BASE__ || '/api').replace(/\/$/, '');
+
+  const covSubmitTask = async (s) => {
+    const ref = covRef(s); const f = covForm[s.id] || {};
+    if (!ref || !(f.titulo || '').trim()) { setCovErr(p => ({ ...p, [s.id]: 'La tarea necesita un título.' })); return; }
+    setCovBusy(p => ({ ...p, [s.id]: true }));
+    try {
+      const body = { titulo: f.titulo.trim(), responsable: f.responsable || 'Clementino',
+                     area: ref.area || undefined, prioridad: 'alta', estado: 'pendiente' };
+      if (ref.kind === 'plan') body.plan_id = ref.id;
+      if (ref.kind === 'hito') body.milestone_id = ref.id;
+      if (f.fecha) body.fecha_vencimiento = f.fecha;
+      const r = await fetch(`${covBase()}/tasks`, { method:'POST', headers: covHeaders(), body: JSON.stringify(body) });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.detail || `Error ${r.status}`); }
+      resolve(s.id, 'aceptada');
+    } catch (e) {
+      setCovErr(p => ({ ...p, [s.id]: String(e.message || e) }));
+    } finally {
+      setCovBusy(p => ({ ...p, [s.id]: false }));
+    }
+  };
+
+  const covSubmitSpec = async (s) => {
+    const ref = covRef(s); const f = covForm[s.id] || {};
+    if (!ref || !(f.spec || '').trim()) { setCovErr(p => ({ ...p, [s.id]: 'Escribe la especificación.' })); return; }
+    setCovBusy(p => ({ ...p, [s.id]: true }));
+    try {
+      const tagRef = ref.kind === 'hito' ? `HITO ${ref.id}` : `PLAN ${ref.id}`;
+      const r = await fetch(`${covBase()}/inbox`, { method:'POST', headers: covHeaders(),
+        body: JSON.stringify({ tipo:'doc', texto:`[ESPECIFICACIÓN ${tagRef}] ${f.spec.trim()}`,
+                               origen:'Lectura del día · Cobertura' }) });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.detail || `Error ${r.status}`); }
+      resolve(s.id, 'aceptada');
+    } catch (e) {
+      setCovErr(p => ({ ...p, [s.id]: String(e.message || e) }));
+    } finally {
+      setCovBusy(p => ({ ...p, [s.id]: false }));
+    }
+  };
+
   const interviewData = useApiData('interview');
   const pendingQuestions = interviewData?.questions || [];
   const [inlineAnswers, setInlineAnswers] = useState({});
@@ -464,6 +530,53 @@ function Lectura(){
             <div className="body">
               <strong><span className="tag">{s.tag}</span>{s.title}</strong>
               <span>{s.body}</span>
+              {covRef(s) && (
+                <div className="cov-acts" data-testid={`cov-acts-${s.id}`}>
+                  {!covMode[s.id] && (
+                    <div className="cov-btn-row">
+                      <button className="cov-btn cov-btn-main" onClick={()=>covOpen(s,'task')}>＋ Agregar tarea</button>
+                      <button className="cov-btn" onClick={()=>covOpen(s,'spec')}>✎ Especificar</button>
+                      <button className="cov-btn cov-btn-ghost" title="Queda como sugerencia pendiente del día"
+                              onClick={()=>setCovMode(p=>({...p,[s.id]:null}))}>Dejar pendiente</button>
+                    </div>
+                  )}
+                  {covMode[s.id] === 'task' && (
+                    <div className="cov-form">
+                      <input className="cov-input" placeholder="Título de la nueva tarea…"
+                             value={(covForm[s.id]||{}).titulo || ''}
+                             onChange={e=>covField(s.id,'titulo',e.target.value)}/>
+                      <div className="cov-form-row">
+                        <select className="cov-input cov-select" value={(covForm[s.id]||{}).responsable || 'Clementino'}
+                                onChange={e=>covField(s.id,'responsable',e.target.value)}>
+                          {COV_RESPONSABLES.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <input className="cov-input" type="date" value={(covForm[s.id]||{}).fecha || ''}
+                               onChange={e=>covField(s.id,'fecha',e.target.value)}/>
+                      </div>
+                      <div className="cov-form-row">
+                        <button className="cov-btn cov-btn-ghost" onClick={()=>setCovMode(p=>({...p,[s.id]:null}))}>Cancelar</button>
+                        <button className="cov-btn cov-btn-main" disabled={!!covBusy[s.id]} onClick={()=>covSubmitTask(s)}>
+                          {covBusy[s.id] ? 'Creando…' : 'Crear tarea →'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {covMode[s.id] === 'spec' && (
+                    <div className="cov-form">
+                      <textarea className="cov-input" rows={2} placeholder="Especificación para este plan/hito…"
+                                value={(covForm[s.id]||{}).spec || ''}
+                                onChange={e=>covField(s.id,'spec',e.target.value)}/>
+                      <div className="cov-form-row">
+                        <button className="cov-btn cov-btn-ghost" onClick={()=>setCovMode(p=>({...p,[s.id]:null}))}>Cancelar</button>
+                        <button className="cov-btn cov-btn-main" disabled={!!covBusy[s.id]} onClick={()=>covSubmitSpec(s)}>
+                          {covBusy[s.id] ? 'Guardando…' : 'Guardar especificación →'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {covErr[s.id] && <div className="cov-err">{covErr[s.id]}</div>}
+                </div>
+              )}
             </div>
             <div className="sug-acts">
               <button className="ok" title="Aceptar" onClick={()=>resolve(s.id,'aceptada')}>{I.check}</button>
@@ -3311,6 +3424,8 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
     return q.grupo === 'gap' ? 'empty' : 'thin';
   };
   const priority = iv ? (HUB_DOMAINS.find(k => estadoFor(k) === 'empty') || HUB_DOMAINS.find(k => estadoFor(k) === 'thin') || null) : null;
+  // Task reader switch state (change reset-task-reader-switch); null on payloads that predate it.
+  const reader = (iv && iv.tasks_reader) ? iv.tasks_reader : null;
 
   const milestoneCount = Array.isArray(milestonesData) ? milestonesData.length : null;
   const milestonesConAnio = Array.isArray(milestonesData) ? milestonesData.filter(m => m.anio != null).length : null;
@@ -3361,13 +3476,22 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
     const meta = HUB_META[key];
     const q = questionFor(key);
     const estado = estadoFor(key);
-    const card = { key, estado, title: meta.title, icon: meta.icon, isPriority: key === priority, body:'', extras:null };
+    const card = { key, estado, title: meta.title, icon: meta.icon, isPriority: key === priority, body:'', extras:null, importing:false };
+    // While an import cycle runs, the tareas card reports the activity instead of its band body;
+    // it flips to the real detected state when the cycle ends (never optimistically).
+    if (key === 'tareas' && reader && reader.importing) {
+      card.importing = true;
+      card.body = 'Importando tareas de Google… La tarjeta pasará a su estado real al terminar.';
+      return card;
+    }
     if (q) {
       card.body = q.pregunta || '';
     } else if (estado === 'waiting') {
       const waitingBodies = {
         planes: 'Se generarán automáticamente cuando cargues la estrategia.',
-        tareas: 'Se desglosarán de los planes cuando la cascada esté activa.',
+        tareas: (reader && reader.enabled === false)
+          ? 'Lector de tareas apagado. Se enciende solo al cargar la estrategia — tus Google Tasks no se tocan.'
+          : 'Se desglosarán de los planes cuando la cascada esté activa.',
       };
       card.body = waitingBodies[key] || 'Se activa con la Estrategia.';
     } else {
@@ -3537,7 +3661,8 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
   // ── Render pieces ──────────────────────────────────────────────────────────
   const renderCard = (card) => {
     // Waiting cards are informational only: no answer form to open, so no button semantics.
-    const interactive = card.estado !== 'waiting';
+    // Same while an import cycle runs — the card reports activity, it is not an answer target.
+    const interactive = card.estado !== 'waiting' && !card.importing;
     return (
     <div key={card.key} data-hub-card="" data-testid={`hub-card-${card.key}`}
          className={`hub-card hub-card--${card.estado}`}
@@ -3551,9 +3676,9 @@ function OnboardingHub({ interview, theme, onTheme, onUnlock }) {
         </div>
         {card.isPriority && <span className="hub-prio">★ PRIORIDAD GENTIL</span>}
       </div>
-      <span className={`hub-state hub-state--${card.estado}`}>
-        {card.estado === 'empty' && <span className="hub-state-dot"/>}
-        {card.estado === 'empty' ? 'VACÍO' : card.estado === 'thin' ? 'INCOMPLETO' : card.estado === 'waiting' ? 'EN ESPERA' : 'COMPLETO'}
+      <span className={`hub-state hub-state--${card.importing ? 'importing' : card.estado}`}>
+        {card.estado === 'empty' && !card.importing && <span className="hub-state-dot"/>}
+        {card.importing ? 'IMPORTANDO' : card.estado === 'empty' ? 'VACÍO' : card.estado === 'thin' ? 'INCOMPLETO' : card.estado === 'waiting' ? 'EN ESPERA' : 'COMPLETO'}
       </span>
 
       {card.key === 'riesgos' && (

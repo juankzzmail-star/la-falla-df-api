@@ -462,7 +462,8 @@ def get_suggestions(db: Session = Depends(get_db)):
         .all()
     )
     return [
-        {"id": s.id, "tag": s.tag, "titulo": s.titulo, "cuerpo": s.cuerpo, "estado": s.estado}
+        {"id": s.id, "tag": s.tag, "titulo": s.titulo, "cuerpo": s.cuerpo, "estado": s.estado,
+         "ref": s.ref}  # change gentil-task-coverage: actionable target ({kind,id,area}) or null
         for s in rows
     ]
 
@@ -551,8 +552,12 @@ def generate_daily_suggestions(db: Session = Depends(get_db)):
 
     today = date.today()
 
-    # Borrar sugerencias previas del día para regenerar limpio
-    db.execute(text("DELETE FROM daily_suggestions WHERE fecha = :today"), {"today": today})
+    # Borrar sugerencias previas del día para regenerar limpio. SOLO las propias (ref IS NULL):
+    # las de cobertura (change gentil-task-coverage) pertenecen al analizador y sobreviven las 6:30.
+    from ._coverage import _ensure_ref_column
+    _ensure_ref_column(db)
+    db.execute(text("DELETE FROM daily_suggestions WHERE fecha = :today AND ref IS NULL"),
+               {"today": today})
 
     # ── Recopilar estado del sistema (se ordena por GRAVEDAD, no por recencia) ────
     financiero_r = db.execute(text("""
@@ -760,6 +765,18 @@ def edit_suggestion(suggestion_id: int, body: SuggestionEdit, db: Session = Depe
     s.estado = "editada"
     db.commit()
     return {"id": s.id, "tag": s.tag, "titulo": s.titulo, "cuerpo": s.cuerpo, "estado": s.estado}
+
+
+# ─── /dashboard/coverage/refresh (change gentil-task-coverage) ───────────────
+
+@router.post("/coverage/refresh")
+def coverage_refresh(db: Session = Depends(get_db)):
+    """Deterministic task-coverage analysis: compares established/completed tasks against each
+    plan/hito and writes actionable findings into daily_suggestions (capped, severity-ordered).
+    Also runs automatically after every Google Tasks import cycle; this endpoint serves the
+    morning heartbeat (n8n) and manual verification. Never fabricates: empty system writes 0."""
+    from ._coverage import refresh_coverage
+    return refresh_coverage(db)
 
 
 # ─── /dashboard/area/{area} ──────────────────────────────────

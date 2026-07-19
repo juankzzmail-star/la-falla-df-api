@@ -198,7 +198,9 @@
     var list = Array.isArray(raw) ? raw : (raw && raw.suggestions) ? raw.suggestions : [];
     var items = list
       .filter(function(s){ return s.estado === 'pendiente'; })
-      .map(function(s){ return { id: String(s.id), tag: s.tag, title: s.titulo, body: s.cuerpo }; });
+      // change gentil-task-coverage: `ref` ({kind,id,area} JSON string) marks actionable coverage
+      // findings; null on ordinary suggestions.
+      .map(function(s){ return { id: String(s.id), tag: s.tag, title: s.titulo, body: s.cuerpo, ref: s.ref || null }; });
     // generatedToday = filas totales de HOY (cualquier estado). Distingue "todo resuelto" (>0 y 0 pendientes)
     // de "el motor no corrió hoy" (0 filas) — para que el empty-state no mienta.
     return { items: items, generatedToday: list.length };

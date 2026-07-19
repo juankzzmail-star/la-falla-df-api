@@ -66,9 +66,21 @@ def _seed_demo_projects():
         pass  # DB not ready yet (e.g. first-boot before migrations); skip silently.
 
 
+def _apply_lazy_migrations():
+    """Additive, idempotent column probes (ddl_v15). Runs before any ORM query so a model column
+    that is new to this deploy exists in the DB by the time the first request reads it."""
+    try:
+        from .routers._coverage import _ensure_ref_column
+        with SessionLocal() as db:
+            _ensure_ref_column(db)
+    except Exception:
+        pass  # DB not ready on first boot — the refresh path re-probes lazily
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _seed_demo_projects()
+    _apply_lazy_migrations()
     # change auto-import-google-tasks: keep the Pulso live by reimporting Google Tasks on a cadence.
     bg_tasks = []
     if tasks.auto_import_enabled():
